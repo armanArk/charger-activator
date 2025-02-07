@@ -1,29 +1,38 @@
+/*
+NOTES:
+SESUAIKAN DAHULU DENGAN SPESIFIKASI RATING MAKSIMUM DARI CHARGER/BATTERY UNTUK SAFETY KESALAHAN INPUT VOLTAGE/CURRENT
+VARIABLE DARI MAX_ALLOWED_VOLTAGE MAX_ALLOWED_CURRENT
+*/
+
 #include <SPI.h>
 #include <mcp_can.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h> // Library for internal (non-volatile) storage
 
-// ----- CAN Setup -----
 #define CAN_CS 5  // Chip Select pin for CAN
 #define CAN_INT 4 // Interrupt pin for CAN
 
 MCP_CAN CAN(CAN_CS); // Create CAN instance
+
+// ----- Shared Preferences Setup -----
+Preferences preferences;
 
 // ----- WiFi & Web Server Setup -----
 const char *ssid = "CAN_Monitor_AP";
 const char *password = "password123";
 WebServer server(80);
 
-// ----- Battery/Charger Parameters -----
-// (For a 32-cell LiFePO4 pack)
-const float CELL_VOLTAGE = 3.6;                             // Maximum per-cell voltage
-const int NUM_CELLS = 32;                                   // 32S configuration
-const float MAX_ALLOWED_VOLTAGE = NUM_CELLS * CELL_VOLTAGE; // Maximum allowed voltage (115.2V)
-const float MAX_ALLOWED_CURRENT = 3.2;                      // Maximum allowed current
+const float CELL_VOLTAGE = 3.64; // Maximum per-cell voltage
+const int NUM_CELLS = 32;        // 32S configuration
 
-// User target parameters (can be updated via the web form)
+// HARUS DISESUAIKAN DENGAN SPESIFIKASI MAKSIMUM DARI CHARGER
+const float MAX_ALLOWED_VOLTAGE = NUM_CELLS * CELL_VOLTAGE; // Maximum allowed voltage (115.2V)
+const float MAX_ALLOWED_CURRENT = 32;                       // Maximum allowed current
+
+// charging parameters (default values)
 float targetVoltage = MAX_ALLOWED_VOLTAGE; // Default target voltage
-float targetCurrent = MAX_ALLOWED_CURRENT; // Default target current
+float targetCurrent = 6;                   // Default target current
 
 // ----- Other Global Variables -----
 unsigned long pmillis = 0;             // For timing the CAN command transmissions
@@ -40,6 +49,7 @@ float batteryCurrent = 0.0;
 void handleRoot();
 void handleSet();
 void handleControl();
+void handleData();
 void sendChargerCommand();
 void stopChargerCommand();
 
@@ -60,6 +70,16 @@ void setup()
   pinMode(CAN_INT, INPUT);
   Serial.println("CAN Ready");
 
+  // Initialize shared preferences and load stored settings.
+  // If no stored value exists, the default value is used.
+  preferences.begin("settings", false);
+  targetVoltage = preferences.getFloat("targetVoltage", targetVoltage);
+  targetCurrent = preferences.getFloat("targetCurrent", targetCurrent);
+  Serial.print("Loaded target voltage: ");
+  Serial.println(targetVoltage);
+  Serial.print("Loaded target current: ");
+  Serial.println(targetCurrent);
+
   // Initialize WiFi in Access Point mode
   WiFi.softAP(ssid, password);
   Serial.print("AP IP address: ");
@@ -69,6 +89,7 @@ void setup()
   server.on("/", handleRoot);
   server.on("/set", handleSet);
   server.on("/control", handleControl);
+  server.on("/data", handleData);
   server.begin();
 }
 
@@ -83,6 +104,15 @@ void loop()
     if (chargerActive)
     {
       sendChargerCommand();
+    }
+  }
+
+  if (Serial.available() > 0)
+  {
+    char data = Serial.read();
+    if (data == 'a')
+    {
+      // Additional serial commands can be implemented here if needed.
     }
   }
 
@@ -116,23 +146,19 @@ void loop()
       {
         // Parse voltage from bytes 0-1 (0.1 V/bit resolution)
         uint16_t voltageRaw = (msgData[0] << 8) | msgData[1];
-        float voltage = voltageRaw * 0.1f;
-        batteryVoltage = voltage;
-
+        batteryVoltage = voltageRaw * 0.1f;
         // Parse current from bytes 2-3 (0.1 A/bit resolution)
         uint16_t currentRaw = (msgData[2] << 8) | msgData[3];
-        float current = currentRaw * 0.1f;
-        batteryCurrent = current;
-
+        batteryCurrent = currentRaw * 0.1f;
         // Parse charging state from byte 4 and update the status text
         uint8_t state = msgData[4];
         chargingStatusText = (state == 0) ? "Charging" : "Stopped";
 
         Serial.println("-------------------------------------");
         Serial.print("Voltage: ");
-        Serial.println(voltage);
+        Serial.println(batteryVoltage);
         Serial.print("Current: ");
-        Serial.println(current);
+        Serial.println(batteryCurrent);
         Serial.print("Status: ");
         Serial.println(chargingStatusText);
         Serial.println("-------------------------------------");
@@ -144,58 +170,115 @@ void loop()
 
 // ----- Web Server Handlers -----
 
-// Root page: displays status, CAN message details, and a form to update parameters
+// Root page: displays current CAN and battery data, plus a form to update charging parameters.
+// The input fields do not have preset default values (so as not to interfere with user input),
+// and their current stored value is shown in an adjacent label.
 void handleRoot()
 {
   String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-  html += "<title>CAN Monitor</title></head><body>";
+  html += "<title>CAN Monitor</title>";
+  // JavaScript to poll the /data endpoint every second and update the displayed values
+  html += "<script>";
+  html += "function updateData() {";
+  html += "  var xhttp = new XMLHttpRequest();";
+  html += "  xhttp.onreadystatechange = function() {";
+  html += "    if (this.readyState == 4 && this.status == 200) {";
+  html += "      var data = JSON.parse(this.responseText);";
+  html += "      document.getElementById('chargingStatus').innerHTML = data.chargingStatus;";
+  html += "      document.getElementById('canId').innerHTML = data.canId;";
+  html += "      document.getElementById('canData').innerHTML = data.canData;";
+  html += "      document.getElementById('voltage').innerHTML = data.voltage + ' V';";
+  html += "      document.getElementById('current').innerHTML = data.current + ' A';";
+  // Update the labels next to the input fields instead of the inputs themselves
+  html += "      document.getElementById('targetVoltageLabel').innerHTML = data.targetVoltage + ' V';";
+  html += "      document.getElementById('targetCurrentLabel').innerHTML = data.targetCurrent + ' A';";
+  html += "    }";
+  html += "  };";
+  html += "  xhttp.open('GET', '/data', true);";
+  html += "  xhttp.send();";
+  html += "}";
+  html += "setInterval(updateData, 1000);";
+  html += "</script>";
+  html += "</head><body>";
   html += "<h1>CAN Monitor</h1>";
-  html += "<p><strong>Charging Status:</strong> " + chargingStatusText + "</p>";
-  html += "<p><strong>CAN ID:</strong> " + webCANId + "</p>";
-  html += "<p><strong>CAN Data:</strong> " + webCANData + "</p>";
-  html += "<p><strong>Voltage:</strong> " + String(batteryVoltage, 1) + " V</p>";
-  html += "<p><strong>Current:</strong> " + String(batteryCurrent, 1) + " A</p>";
+  html += "<p><strong>Charging Status:</strong> <span id='chargingStatus'>" + chargingStatusText + "</span></p>";
+  html += "<p><strong>Maximum Voltage Rating:</strong> <span id='maxAlowedVoltage'>" + String(MAX_ALLOWED_VOLTAGE) + " V</span></p>";
+  html += "<p><strong>Maximum Current Rating:</strong> <span id='maxAlowedCurrent'>" + String(MAX_ALLOWED_CURRENT) + " A</span></p>";
+  html += "<p><strong>Received CAN ID:</strong> <span id='canId'>" + webCANId + "</span></p>";
+  html += "<p><strong>Received CAN Data:</strong> <span id='canData'>" + webCANData + "</span></p>";
+  html += "<p><strong>Battery Voltage:</strong> <span id='voltage'>" + String(batteryVoltage, 1) + " V</span></p>";
+  html += "<p><strong>Battery Current:</strong> <span id='current'>" + String(batteryCurrent, 1) + " A</span></p>";
 
-  // Form to update target voltage and current
+  // Form to update charger parameters.
+  // Input fields include min/max attributes to enforce safety constraints.
+  // The current stored values are displayed in adjacent labels.
   html += "<h2>Update Charger Parameters</h2>";
   html += "<form action='/set' method='GET'>";
-  html += "Set target Voltage (V): <input type='number' step='0.1' name='v' value='" + String(targetVoltage, 1) + "'><br>";
-  html += "Set target Current (A): <input type='number' step='0.1' name='c' value='" + String(targetCurrent, 1) + "'><br>";
+  html += "Set Charging Voltage (V): <input type='number' step='0.1' name='v' id='targetVoltage' min='0' max='" + String(MAX_ALLOWED_VOLTAGE) + "'> ";
+  html += "<span id='targetVoltageLabel'>" + String(targetVoltage, 1) + " V</span><br>";
+  html += "Set Charging Current (A): <input type='number' step='0.1' name='c' id='targetCurrent' min='0' max='" + String(MAX_ALLOWED_CURRENT) + "'> ";
+  html += "<span id='targetCurrentLabel'>" + String(targetCurrent, 1) + " A</span><br>";
   html += "<input type='submit' value='Update Parameters'>";
   html += "</form>";
 
-  // Buttons to control charging (start/stop)
   html += "<h2>Control Charger</h2>";
   html += "<button onclick=\"location.href='/control?cmd=start'\">Start Charging</button> ";
   html += "<button onclick=\"location.href='/control?cmd=stop'\">Stop Charging</button>";
-
   html += "</body></html>";
   server.send(200, "text/html", html);
 }
 
-// Handle the form submission to update target voltage and current
+// Handle form submission to update target voltage and current.
+// Values are checked for safety and then stored in shared preferences.
 void handleSet()
 {
+  bool valid = true;
+  String errorMsg = "";
+
   if (server.hasArg("v"))
   {
     float newVoltage = server.arg("v").toFloat();
-    targetVoltage = newVoltage;
-    Serial.print("Updated target voltage: ");
-    Serial.println(targetVoltage);
+    if (newVoltage >= 0 && newVoltage <= MAX_ALLOWED_VOLTAGE)
+    {
+      targetVoltage = newVoltage;
+      preferences.putFloat("targetVoltage", targetVoltage);
+      Serial.print("Updated target voltage: ");
+      Serial.println(targetVoltage);
+    }
+    else
+    {
+      valid = false;
+      errorMsg += "Voltage out of range. ";
+    }
   }
   if (server.hasArg("c"))
   {
     float newCurrent = server.arg("c").toFloat();
-    targetCurrent = newCurrent;
-    Serial.print("Updated target current: ");
-    Serial.println(targetCurrent);
+    if (newCurrent >= 0 && newCurrent <= MAX_ALLOWED_CURRENT)
+    {
+      targetCurrent = newCurrent;
+      preferences.putFloat("targetCurrent", targetCurrent);
+      Serial.print("Updated target current: ");
+      Serial.println(targetCurrent);
+    }
+    else
+    {
+      valid = false;
+      errorMsg += "Current out of range. ";
+    }
   }
-  // Redirect back to the root page so the form stays on the current page
+  if (!valid)
+  {
+    server.send(400, "text/plain", errorMsg);
+    return;
+  }
+
+  // Redirect back to the root page so the updated values are immediately visible
   server.sendHeader("Location", "/", true);
   server.send(302, "text/plain", "");
 }
 
-// Handle control commands (start/stop charging)
+// Handle control commands (start/stop charging) and redirect back to the root page.
 void handleControl()
 {
   if (server.hasArg("cmd"))
@@ -213,17 +296,30 @@ void handleControl()
       Serial.println("Charger stopped");
     }
   }
-  // Redirect back to the root page
   server.sendHeader("Location", "/", true);
   server.send(302, "text/plain", "");
 }
 
+// New endpoint that returns updated CAN and parameter data in JSON format.
+void handleData()
+{
+  String json = "{";
+  json += "\"voltage\":" + String(batteryVoltage, 1) + ",";
+  json += "\"current\":" + String(batteryCurrent, 1) + ",";
+  json += "\"canId\":\"" + webCANId + "\",";
+  json += "\"canData\":\"" + webCANData + "\",";
+  json += "\"chargingStatus\":\"" + chargingStatusText + "\",";
+  json += "\"targetVoltage\":" + String(targetVoltage, 1) + ",";
+  json += "\"targetCurrent\":" + String(targetCurrent, 1);
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
 // ----- CAN Command Functions -----
 
-// Send the charger command using the current target voltage/current values
+// Send the charger command using the current target voltage/current values.
 void sendChargerCommand()
 {
-  // Convert voltage/current to 0.1 units
   uint16_t voltageVal = targetVoltage * 10;
   byte voltage_high = (voltageVal >> 8) & 0xFF;
   byte voltage_low = voltageVal & 0xFF;
@@ -247,7 +343,6 @@ void sendChargerCommand()
   Serial.print("V, ");
   Serial.print(targetCurrent, 1);
   Serial.println("A");
-  // Uncomment the following code to enable CAN message sending:
   if (CAN.sendMsgBuf(0x1806E5F4, 1, 8, data) == CAN_OK)
   {
     Serial.print("Send command: ");
@@ -262,7 +357,7 @@ void sendChargerCommand()
   }
 }
 
-// Send a command to stop charging
+// Send a command to stop charging.
 void stopChargerCommand()
 {
   byte data[8] = {
