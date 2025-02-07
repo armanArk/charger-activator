@@ -2,299 +2,285 @@
 #include <mcp_can.h>
 #include <WiFi.h>
 #include <WebServer.h>
-#include <ArduinoJson.h>
 
-#define CAN_CS 5
-#define CAN_INT 4
+// ----- CAN Setup -----
+#define CAN_CS 5  // Chip Select pin for CAN
+#define CAN_INT 4 // Interrupt pin for CAN
 
+MCP_CAN CAN(CAN_CS); // Create CAN instance
+
+// ----- WiFi & Web Server Setup -----
+const char *ssid = "CAN_Monitor_AP";
+const char *password = "password123";
+WebServer server(80);
+
+// ----- Battery/Charger Parameters -----
+// (For a 32-cell LiFePO4 pack)
+const float CELL_VOLTAGE = 3.6;                             // Maximum per-cell voltage
+const int NUM_CELLS = 32;                                   // 32S configuration
+const float MAX_ALLOWED_VOLTAGE = NUM_CELLS * CELL_VOLTAGE; // Maximum allowed voltage (115.2V)
+const float MAX_ALLOWED_CURRENT = 3.2;                      // Maximum allowed current
+
+// User target parameters (can be updated via the web form)
+float targetVoltage = MAX_ALLOWED_VOLTAGE; // Default target voltage
+float targetCurrent = MAX_ALLOWED_CURRENT; // Default target current
+
+// ----- Other Global Variables -----
+unsigned long pmillis = 0;             // For timing the CAN command transmissions
+bool chargerActive = false;            // Charging flag (true = charging, false = stopped)
+String chargingStatusText = "Stopped"; // Charging status text for display
+
+// Global variables to store the latest CAN message details for the web page
+String webCANId = "";
+String webCANData = "";
+float batteryVoltage = 0.0;
+float batteryCurrent = 0.0;
+
+// ----- Function Prototypes -----
 void handleRoot();
 void handleSet();
 void handleControl();
-void handleData();
 void sendChargerCommand();
-void handleCANMessages();
-void printBatteryStatus();
-
-MCP_CAN CAN(CAN_CS);
-
-// Konfigurasi Web Server
-const char *ssid = "bms Charger";
-const char *password = "bms12345";
-WebServer server(80);
-
-// Parameter Charger
-const float MAX_VOLTAGE = 115.2f;
-const float MAX_CURRENT = 35.0f;
-float setVoltage = 108.8f;
-float setCurrent = 5.0f;
-bool chargerActive = false;
-unsigned long lastUpdate = 0;
-
-// Konfigurasi CAN
-#define CAN_ID_RECEIVE 0x98FF50E5
-#define CAN_ID_RESPONSE 0x1806E5F4
-
-// Status Baterai
-float batteryVoltage = 0.0f;
-float batteryCurrent = 0.0f;
-String chargingStatus = "Disconnected";
-String receivedCANId = "";
-String receivedCANData = "";
+void stopChargerCommand();
 
 void setup()
 {
   Serial.begin(115200);
+  while (!Serial)
+    ; // Wait for Serial to be ready
 
-  // Inisialisasi CAN Bus
+  // Initialize CAN bus
   if (CAN.begin(MCP_ANY, CAN_250KBPS, MCP_8MHZ) != CAN_OK)
   {
-    Serial.println("Gagal inisialisasi CAN");
+    Serial.println("CAN init failed");
     while (1)
       ;
   }
   CAN.setMode(MCP_NORMAL);
+  pinMode(CAN_INT, INPUT);
+  Serial.println("CAN Ready");
 
-  // Membuat WiFi Access Point
+  // Initialize WiFi in Access Point mode
   WiFi.softAP(ssid, password);
+  Serial.print("AP IP address: ");
+  Serial.println(WiFi.softAPIP());
+
+  // Set up web server routes
   server.on("/", handleRoot);
   server.on("/set", handleSet);
   server.on("/control", handleControl);
-  server.on("/data", handleData);
   server.begin();
-  Serial.println(WiFi.softAPIP());
 }
 
 void loop()
 {
   server.handleClient();
 
-  if (chargerActive && millis() - lastUpdate > 1000)
+  // Periodically send a charger command if charging is active
+  if (millis() - pmillis > 1000)
   {
-    sendChargerCommand();
-    lastUpdate = millis();
+    pmillis = millis();
+    if (chargerActive)
+    {
+      sendChargerCommand();
+    }
   }
 
+  // Check for incoming CAN messages
   if (digitalRead(CAN_INT) == LOW)
   {
-    handleCANMessages();
+    unsigned long id;
+    byte len;
+    byte msgData[8];
+    if (CAN.readMsgBuf(&id, &len, msgData) == CAN_OK)
+    {
+      // Update global variables for the web display
+      webCANId = "0x" + String(id, HEX);
+      webCANData = "";
+      for (byte i = 0; i < len; i++)
+      {
+        if (msgData[i] < 0x10)
+        {
+          webCANData += "0";
+        }
+        webCANData += String(msgData[i], HEX) + " ";
+      }
+
+      // Print improved CAN message info to Serial
+      Serial.print("CAN ID: ");
+      Serial.print(webCANId);
+      Serial.print(" | CAN Data: ");
+      Serial.println(webCANData);
+
+      if (len == 8)
+      {
+        // Parse voltage from bytes 0-1 (0.1 V/bit resolution)
+        uint16_t voltageRaw = (msgData[0] << 8) | msgData[1];
+        float voltage = voltageRaw * 0.1f;
+        batteryVoltage = voltage;
+
+        // Parse current from bytes 2-3 (0.1 A/bit resolution)
+        uint16_t currentRaw = (msgData[2] << 8) | msgData[3];
+        float current = currentRaw * 0.1f;
+        batteryCurrent = current;
+
+        // Parse charging state from byte 4 and update the status text
+        uint8_t state = msgData[4];
+        chargingStatusText = (state == 0) ? "Charging" : "Stopped";
+
+        Serial.println("-------------------------------------");
+        Serial.print("Voltage: ");
+        Serial.println(voltage);
+        Serial.print("Current: ");
+        Serial.println(current);
+        Serial.print("Status: ");
+        Serial.println(chargingStatusText);
+        Serial.println("-------------------------------------");
+      }
+    }
   }
+  delay(100);
 }
 
-// Fungsi untuk memproses pesan CAN
-void handleCANMessages()
-{
-  unsigned long id;
-  byte len, data[8];
-  int result = CAN.readMsgBuf(&id, &len, data);
-  if (result == CAN_OK)
-  {
-    receivedCANId = "0x" + String(id, HEX);
-    receivedCANData = "";
-    for (int i = 0; i < len; i++)
-    {
-      receivedCANData += String(data[i], HEX) + " ";
-    }
+// ----- Web Server Handlers -----
 
-    if (id == CAN_ID_RECEIVE && len == 8)
-    {
-      batteryVoltage = ((data[0] << 8) | data[1]) * 0.1f;
-      batteryCurrent = ((data[2] << 8) | data[3]) * 0.1f;
-      chargingStatus = (data[4] == 0) ? "Charging" : "Stopped";
-      printBatteryStatus();
-    }
-  }
-}
-
-// Tampilan antarmuka web
+// Root page: displays status, CAN message details, and a form to update parameters
 void handleRoot()
 {
-  String html = R"=====(
-  <!DOCTYPE html><html><head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Battery Charger</title>
-  <style>
-    body { 
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 10px;
-      background: #f5f5f5;
-    }
-    .container {
-      max-width: 400px;
-      margin: 0 auto;
-    }
-    .card {
-      background: white;
-      border-radius: 8px;
-      padding: 15px;
-      margin: 10px 0;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    button {
-      padding: 10px;
-      margin: 5px;
-      background: #4CAF50;
-      color: white;
-      border: none;
-      border-radius: 4px;
-    }
-  </style>
-  <script>
-  setInterval(function() {
-    var xhttp = new XMLHttpRequest();
-    xhttp.onreadystatechange = function() {
-      if(this.readyState == 4 && this.status == 200) {
-        var data = JSON.parse(this.responseText);
-        document.getElementById("chargingStatus").textContent = data.status;
-        document.getElementById("canId").textContent = data.canId;
-        document.getElementById("canData").textContent = data.canData;
-        document.getElementById("battVolt").textContent = data.voltage.toFixed(1) + 'V';
-        document.getElementById("battCurrent").textContent = data.current.toFixed(1) + 'A';
-      }
-    };
-    xhttp.open("GET", "/data", true);
-    xhttp.send();
-  }, 1000);
-  </script></head>
-  <body>
-    <div class="container">
-      <div class="card">
-        <div>Status Charging: <span id="chargingStatus">)=====" +
-                chargingStatus + R"=====(</span></div>
-        <div>ID CAN Terakhir: <span id="canId">)=====" +
-                receivedCANId + R"=====(</span></div>
-        <div>Data CAN: <span id="canData">)=====" +
-                receivedCANData + R"=====(</span></div>
-        <div>Tegangan Baterai: <span id="battVolt">0.0V</span></div>
-        <div>Arus Baterai: <span id="battCurrent">0.0A</span></div>
-        <button onclick="fetch('/control?cmd=start')">Start</button>
-        <button onclick="fetch('/control?cmd=stop')">Stop</button>
-      </div>
-    </div>
-  </body></html>)=====";
+  String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  html += "<title>CAN Monitor</title></head><body>";
+  html += "<h1>CAN Monitor</h1>";
+  html += "<p><strong>Charging Status:</strong> " + chargingStatusText + "</p>";
+  html += "<p><strong>CAN ID:</strong> " + webCANId + "</p>";
+  html += "<p><strong>CAN Data:</strong> " + webCANData + "</p>";
+  html += "<p><strong>Voltage:</strong> " + String(batteryVoltage, 1) + " V</p>";
+  html += "<p><strong>Current:</strong> " + String(batteryCurrent, 1) + " A</p>";
+
+  // Form to update target voltage and current
+  html += "<h2>Update Charger Parameters</h2>";
+  html += "<form action='/set' method='GET'>";
+  html += "Set target Voltage (V): <input type='number' step='0.1' name='v' value='" + String(targetVoltage, 1) + "'><br>";
+  html += "Set target Current (A): <input type='number' step='0.1' name='c' value='" + String(targetCurrent, 1) + "'><br>";
+  html += "<input type='submit' value='Update Parameters'>";
+  html += "</form>";
+
+  // Buttons to control charging (start/stop)
+  html += "<h2>Control Charger</h2>";
+  html += "<button onclick=\"location.href='/control?cmd=start'\">Start Charging</button> ";
+  html += "<button onclick=\"location.href='/control?cmd=stop'\">Stop Charging</button>";
+
+  html += "</body></html>";
   server.send(200, "text/html", html);
 }
 
-// API untuk mendapatkan data
-void handleData()
-{
-  JsonDocument doc;
-  doc["status"] = chargingStatus;
-  doc["canId"] = receivedCANId;
-  doc["canData"] = receivedCANData;
-  doc["voltage"] = batteryVoltage;
-  doc["current"] = batteryCurrent;
-
-  String output;
-  serializeJson(doc, output);
-  server.send(200, "application/json", output);
-}
-
-// Fungsi pengiriman perintah ke charger
-void sendChargerCommand()
-{
-  uint16_t voltage = setVoltage * 10;
-  uint16_t current = setCurrent * 10;
-  byte data[8] = {
-      highByte(voltage), lowByte(voltage),
-      highByte(current), lowByte(current),
-      0x00, 0x00, 0x00, 0x00};
-  Serial.print("sending: ");
-  Serial.print(voltage);
-  Serial.println("v,");
-  Serial.print(current);
-  Serial.println("a");
-  // if (CAN.sendMsgBuf(CAN_ID_RESPONSE, 0, 8, data) == CAN_OK)
-  // {
-  //   Serial.print("Terkirim: ");
-  //   Serial.print(setVoltage, 1);
-  //   Serial.print("V, ");
-  //   Serial.print(setCurrent, 1);
-  //   Serial.println("A");
-  // }
-}
-
-// Fungsi untuk menghentikan charger
-void stopChargerCommand()
-{
-  byte data[8] = {0, 0, 0, 0, 0x01, 0, 0, 0};
-  CAN.sendMsgBuf(CAN_ID_RESPONSE, 0, 8, data);
-  chargerActive = false;
-  Serial.println("Charging dihentikan");
-}
-
-// Fungsi bantuan
-void printBatteryStatus()
-
-{
-  Serial.println("-------------------------------------");
-  Serial.print("Tegangan: ");
-  Serial.println(batteryVoltage);
-  Serial.print("Arus: ");
-  Serial.println(batteryCurrent);
-  Serial.print("Status: ");
-  Serial.println(chargingStatus);
-  Serial.println("-------------------------------------");
-}
-
-// Fungsi untuk menangani perubahan parameter
+// Handle the form submission to update target voltage and current
 void handleSet()
 {
-  String response;
   if (server.hasArg("v"))
   {
     float newVoltage = server.arg("v").toFloat();
-    Serial.print("Voltage changed to: ");
-    Serial.println(newVoltage);
-
-    if (newVoltage > MAX_VOLTAGE)
-    {
-      response = "Voltage exceeds 115.2V limit!";
-      server.send(400, "text/plain", response);
-      return;
-    }
-    setVoltage = newVoltage;
+    targetVoltage = newVoltage;
+    Serial.print("Updated target voltage: ");
+    Serial.println(targetVoltage);
   }
-
   if (server.hasArg("c"))
   {
     float newCurrent = server.arg("c").toFloat();
-    Serial.print("Current changed to: ");
-    Serial.println(newCurrent);
-
-    if (newCurrent > MAX_CURRENT)
-    {
-      response = "Current exceeds 35A limit!";
-      server.send(400, "text/plain", response);
-      return;
-    }
-    setCurrent = newCurrent;
+    targetCurrent = newCurrent;
+    Serial.print("Updated target current: ");
+    Serial.println(targetCurrent);
   }
-
-  Serial.println("New parameters saved");
-  server.send(200, "text/plain", "Parameters updated");
+  // Redirect back to the root page so the form stays on the current page
+  server.sendHeader("Location", "/", true);
+  server.send(302, "text/plain", "");
 }
 
-// Fungsi kontrol start/stop charger
+// Handle control commands (start/stop charging)
 void handleControl()
 {
   if (server.hasArg("cmd"))
   {
     String cmd = server.arg("cmd");
-    Serial.print("Received command: ");
-    Serial.println(cmd);
-
     if (cmd == "start")
     {
-      Serial.println("Starting charger...");
       chargerActive = true;
+      Serial.println("Charger started");
     }
     else if (cmd == "stop")
     {
-      Serial.println("Stopping charger...");
+      chargerActive = false;
       stopChargerCommand();
+      Serial.println("Charger stopped");
     }
   }
-  server.send(200, "text/plain", "Command received");
+  // Redirect back to the root page
+  server.sendHeader("Location", "/", true);
+  server.send(302, "text/plain", "");
+}
+
+// ----- CAN Command Functions -----
+
+// Send the charger command using the current target voltage/current values
+void sendChargerCommand()
+{
+  // Convert voltage/current to 0.1 units
+  uint16_t voltageVal = targetVoltage * 10;
+  byte voltage_high = (voltageVal >> 8) & 0xFF;
+  byte voltage_low = voltageVal & 0xFF;
+
+  uint16_t currentVal = targetCurrent * 10;
+  byte current_high = (currentVal >> 8) & 0xFF;
+  byte current_low = currentVal & 0xFF;
+
+  byte data[8] = {
+      voltage_high,
+      voltage_low,
+      current_high,
+      current_low,
+      0x00, // Control byte: 0x00 to activate charging
+      0x00, // Mode selector (if needed)
+      0x00, // Reserved
+      0x00  // Reserved
+  };
+  Serial.print("SEND COMMAND: ");
+  Serial.print(targetVoltage, 1);
+  Serial.print("V, ");
+  Serial.print(targetCurrent, 1);
+  Serial.println("A");
+  // Uncomment the following code to enable CAN message sending:
+  if (CAN.sendMsgBuf(0x1806E5F4, 1, 8, data) == CAN_OK)
+  {
+    Serial.print("Send command: ");
+    Serial.print(targetVoltage, 1);
+    Serial.print("V, ");
+    Serial.print(targetCurrent, 1);
+    Serial.println("A");
+  }
+  else
+  {
+    Serial.println("Send failed");
+  }
+}
+
+// Send a command to stop charging
+void stopChargerCommand()
+{
+  byte data[8] = {
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01, // Control byte: 0x01 indicates stop charging
+      0x00,
+      0x00,
+      0x00};
+
+  if (CAN.sendMsgBuf(0x1806E5F4, 1, 8, data) == CAN_OK)
+  {
+    Serial.println("Stop command sent, charging stopped");
+  }
+  else
+  {
+    Serial.println("Stop command failed");
+  }
 }
