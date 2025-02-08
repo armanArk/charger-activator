@@ -45,6 +45,11 @@ String webCANData = "";
 float batteryVoltage = 0.0;
 float batteryCurrent = 0.0;
 
+// charging current cuttoff
+float cutoffCurrent = 4.0;         // Default cutoff current
+unsigned long cutoffStartTime = 0; // Timer untuk cutoff
+bool checkingCutoff = false;       // Flag pengecekan cutoff
+
 // ----- Function Prototypes -----
 void handleRoot();
 void handleSet();
@@ -52,6 +57,8 @@ void handleControl();
 void handleData();
 void sendChargerCommand();
 void stopChargerCommand();
+void stopCharger();
+void startCharger();
 
 void setup()
 {
@@ -75,10 +82,14 @@ void setup()
   preferences.begin("settings", false);
   targetVoltage = preferences.getFloat("targetVoltage", targetVoltage);
   targetCurrent = preferences.getFloat("targetCurrent", targetCurrent);
+  cutoffCurrent = preferences.getFloat("cutoffCurrent", cutoffCurrent);
+
   Serial.print("Loaded target voltage: ");
   Serial.println(targetVoltage);
   Serial.print("Loaded target current: ");
   Serial.println(targetCurrent);
+  Serial.print("Loaded target cutoff current: ");
+  Serial.println(cutoffCurrent);
 
   // Initialize WiFi in Access Point mode
   WiFi.softAP(ssid, password);
@@ -112,7 +123,7 @@ void loop()
     char data = Serial.read();
     if (data == 'a')
     {
-      // Additional serial commands can be implemented here if needed.
+      chargerActive = !chargerActive;
     }
   }
 
@@ -124,7 +135,7 @@ void loop()
     byte msgData[8];
     if (CAN.readMsgBuf(&id, &len, msgData) == CAN_OK)
     {
-      // Update global variables for the web display
+      // Update global variables for web display
       webCANId = "0x" + String(id, HEX);
       webCANData = "";
       for (byte i = 0; i < len; i++)
@@ -135,37 +146,88 @@ void loop()
         }
         webCANData += String(msgData[i], HEX) + " ";
       }
-
-      // Print improved CAN message info to Serial
-      Serial.print("CAN ID: ");
-      Serial.print(webCANId);
-      Serial.print(" | CAN Data: ");
-      Serial.println(webCANData);
-
+      // Update battery data
       if (len == 8)
       {
-        // Parse voltage from bytes 0-1 (0.1 V/bit resolution)
         uint16_t voltageRaw = (msgData[0] << 8) | msgData[1];
         batteryVoltage = voltageRaw * 0.1f;
-        // Parse current from bytes 2-3 (0.1 A/bit resolution)
         uint16_t currentRaw = (msgData[2] << 8) | msgData[3];
         batteryCurrent = currentRaw * 0.1f;
-        // Parse charging state from byte 4 and update the status text
-        uint8_t state = msgData[4];
-        chargingStatusText = (state == 0) ? "Charging" : "Stopped";
 
+        // Parse charging state from byte 4 and update the status string
+        uint8_t state = msgData[4];
+        if (checkingCutoff)
+        {
+          if (batteryCurrent < cutoffCurrent)
+          {
+            chargingStatusText = "Cutoff: Low Current";
+          }
+        }
+        else
+        {
+          chargingStatusText = (state == 0) ? "Charging" : "Stopped";
+        }
+
+        // Debugging CAN message
         Serial.println("-------------------------------------");
+        Serial.print("canId: ");
+        Serial.println(webCANId);
+        Serial.print("canData: ");
+        Serial.println(webCANData);
         Serial.print("Voltage: ");
-        Serial.println(batteryVoltage);
+        Serial.print(batteryVoltage);
+        Serial.println(" V");
         Serial.print("Current: ");
-        Serial.println(batteryCurrent);
-        Serial.print("Status: ");
-        Serial.println(chargingStatusText);
+        Serial.print(batteryCurrent);
+        Serial.println(" A");
         Serial.println("-------------------------------------");
       }
     }
   }
-  delay(100);
+
+  // Cutoff logic for charging
+  if (chargerActive)
+  {
+    if (!checkingCutoff)
+    {
+      cutoffStartTime = millis();
+      checkingCutoff = true;
+    }
+    else
+    {
+      // Check after 10 seconds of charging
+      if (millis() - cutoffStartTime >= 10000)
+      {
+        if (batteryCurrent < cutoffCurrent)
+        {
+          chargerActive = false;
+          stopChargerCommand();
+          chargingStatusText = "Cutoff: Low Current";
+
+          // Debugging cutoff event
+          Serial.println("=====================================");
+          Serial.println("Cutoff Triggered!");
+          Serial.print("Battery Voltage: ");
+          Serial.print(batteryVoltage);
+          Serial.println(" V");
+          Serial.print("Battery Current: ");
+          Serial.print(batteryCurrent);
+          Serial.println(" A");
+          Serial.print("Cutoff Current Threshold: ");
+          Serial.print(cutoffCurrent);
+          Serial.println(" A");
+          Serial.println("=====================================");
+        }
+        checkingCutoff = false; // Reset flag
+      }
+    }
+  }
+  else
+  {
+    checkingCutoff = false; // Reset jika charging dimatikan manual
+  }
+
+  delay(100); // Small delay to prevent excessive CPU usage
 }
 
 // ----- Web Server Handlers -----
@@ -206,17 +268,19 @@ void handleRoot()
   html += "<p><strong>Maximum Current Rating:</strong> <span id='maxAlowedCurrent'>" + String(MAX_ALLOWED_CURRENT) + " A</span></p>";
   html += "<p><strong>Received CAN ID:</strong> <span id='canId'>" + webCANId + "</span></p>";
   html += "<p><strong>Received CAN Data:</strong> <span id='canData'>" + webCANData + "</span></p>";
-  html += "<p><strong>Battery Voltage:</strong> <span id='voltage'>" + String(batteryVoltage, 1) + " V</span></p>";
-  html += "<p><strong>Battery Current:</strong> <span id='current'>" + String(batteryCurrent, 1) + " A</span></p>";
+  html += "<p><strong>Charging Voltage:</strong> <span id='voltage'>" + String(batteryVoltage, 1) + " V</span></p>";
+  html += "<p><strong>Charging Current:</strong> <span id='current'>" + String(batteryCurrent, 1) + " A</span></p>";
 
   // Form to update charger parameters.
   // Input fields include min/max attributes to enforce safety constraints.
   // The current stored values are displayed in adjacent labels.
   html += "<h2>Update Charger Parameters</h2>";
   html += "<form action='/set' method='GET'>";
-  html += "Set Charging Voltage (V): <input type='number' step='0.1' name='v' id='targetVoltage' min='0' max='" + String(MAX_ALLOWED_VOLTAGE) + "'> ";
+  html += "Set Cutoff Current (A): <input type='number' step='0.1' name='cutoff' id='cutoffCurrent' min='1' max='" + String(15) + "'> ";
+  html += "<span id='cutoffCurrentLabel'>" + String(cutoffCurrent, 1) + " A</span><br>";
+  html += "Set Charging Voltage (V): <input type='number' step='0.1' name='v' id='targetVoltage' min='30' max='" + String(MAX_ALLOWED_VOLTAGE) + "'> ";
   html += "<span id='targetVoltageLabel'>" + String(targetVoltage, 1) + " V</span><br>";
-  html += "Set Charging Current (A): <input type='number' step='0.1' name='c' id='targetCurrent' min='0' max='" + String(MAX_ALLOWED_CURRENT) + "'> ";
+  html += "Set Charging Current (A): <input type='number' step='0.1' name='c' id='targetCurrent' min='3' max='" + String(MAX_ALLOWED_CURRENT) + "'> ";
   html += "<span id='targetCurrentLabel'>" + String(targetCurrent, 1) + " A</span><br>";
   html += "<input type='submit' value='Update Parameters'>";
   html += "</form>";
@@ -225,11 +289,10 @@ void handleRoot()
   html += "<button onclick=\"location.href='/control?cmd=start'\">Start Charging</button> ";
   html += "<button onclick=\"location.href='/control?cmd=stop'\">Stop Charging</button>";
   html += "</body></html>";
+
   server.send(200, "text/html", html);
 }
 
-// Handle form submission to update target voltage and current.
-// Values are checked for safety and then stored in shared preferences.
 void handleSet()
 {
   bool valid = true;
@@ -238,7 +301,7 @@ void handleSet()
   if (server.hasArg("v"))
   {
     float newVoltage = server.arg("v").toFloat();
-    if (newVoltage >= 0 && newVoltage <= MAX_ALLOWED_VOLTAGE)
+    if (newVoltage > 0 && newVoltage <= MAX_ALLOWED_VOLTAGE)
     {
       targetVoltage = newVoltage;
       preferences.putFloat("targetVoltage", targetVoltage);
@@ -251,10 +314,11 @@ void handleSet()
       errorMsg += "Voltage out of range. ";
     }
   }
+
   if (server.hasArg("c"))
   {
     float newCurrent = server.arg("c").toFloat();
-    if (newCurrent >= 0 && newCurrent <= MAX_ALLOWED_CURRENT)
+    if (newCurrent > 0 && newCurrent <= MAX_ALLOWED_CURRENT)
     {
       targetCurrent = newCurrent;
       preferences.putFloat("targetCurrent", targetCurrent);
@@ -267,15 +331,46 @@ void handleSet()
       errorMsg += "Current out of range. ";
     }
   }
+
+  if (server.hasArg("cutoff"))
+  {
+    float newCutoff = server.arg("cutoff").toFloat();
+    if (newCutoff > 0 && newCutoff <= 15)
+    {
+      cutoffCurrent = newCutoff;
+      preferences.putFloat("cutoffCurrent", cutoffCurrent);
+      Serial.print("Updated cutoff current: ");
+      Serial.println(cutoffCurrent);
+    }
+    else
+    {
+      valid = false;
+      errorMsg += "Cutoff current out of range. ";
+    }
+  }
+
   if (!valid)
   {
     server.send(400, "text/plain", errorMsg);
     return;
   }
 
-  // Redirect back to the root page so the updated values are immediately visible
   server.sendHeader("Location", "/", true);
   server.send(302, "text/plain", "");
+}
+
+void startCharger()
+{
+  chargerActive = true;
+  checkingCutoff = false;
+  chargingStatusText = "Charging";
+}
+
+void stopCharger()
+{
+  chargerActive = false;
+  stopChargerCommand();
+  Serial.println("Charger stopped");
 }
 
 // Handle control commands (start/stop charging) and redirect back to the root page.
@@ -286,27 +381,24 @@ void handleControl()
     String cmd = server.arg("cmd");
     if (cmd == "start")
     {
-      chargerActive = true;
-      Serial.println("Charger started");
+      startCharger();
     }
     else if (cmd == "stop")
     {
-      chargerActive = false;
-      stopChargerCommand();
-      Serial.println("Charger stopped");
+      stopCharger();
     }
   }
   server.sendHeader("Location", "/", true);
   server.send(302, "text/plain", "");
 }
 
-// New endpoint that returns updated CAN and parameter data in JSON format.
 void handleData()
 {
   String json = "{";
   json += "\"voltage\":" + String(batteryVoltage, 1) + ",";
   json += "\"current\":" + String(batteryCurrent, 1) + ",";
   json += "\"canId\":\"" + webCANId + "\",";
+  json += "\"cutoffCurrent\":" + String(cutoffCurrent, 1) + ",";
   json += "\"canData\":\"" + webCANData + "\",";
   json += "\"chargingStatus\":\"" + chargingStatusText + "\",";
   json += "\"targetVoltage\":" + String(targetVoltage, 1) + ",";
@@ -315,19 +407,15 @@ void handleData()
   server.send(200, "application/json", json);
 }
 
-// ----- CAN Command Functions -----
-
 // Send the charger command using the current target voltage/current values.
 void sendChargerCommand()
 {
   uint16_t voltageVal = targetVoltage * 10;
   byte voltage_high = (voltageVal >> 8) & 0xFF;
   byte voltage_low = voltageVal & 0xFF;
-
   uint16_t currentVal = targetCurrent * 10;
   byte current_high = (currentVal >> 8) & 0xFF;
   byte current_low = currentVal & 0xFF;
-
   byte data[8] = {
       voltage_high,
       voltage_low,
