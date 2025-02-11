@@ -1,10 +1,64 @@
+// --- CAN Bus Functions ---
+
+void sendChargerCommand()
+{
+    // Create CAN message to control the charger (Report 1)
+    byte data[8] = {0};
+    uint16_t voltageVal = targetVoltage * 10; // Scale voltage (0.1V per bit)
+    data[0] = highByte(voltageVal);           // High byte of voltage
+    data[1] = lowByte(voltageVal);            // Low byte of voltage
+    uint16_t currentVal = targetCurrent * 10; // Scale current (0.1A per bit)
+    data[2] = highByte(currentVal);           // High byte of current
+    data[3] = lowByte(currentVal);            // Low byte of current
+    data[4] = 0x00;                           // Control byte:  0x00 = start charging, 0x01 = stop
+    data[5] = 0x00;                           // Byte 5-7: Reserved (data[5] reserved for heating contactor)
+    data[6] = 0x00;
+    data[7] = 0x00;
+
+    // Send CAN message
+    byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
+    if (sndStat == CAN_OK)
+    {
+        Serial.print("Sent CAN command. Target Voltage: ");
+        Serial.print(targetVoltage);
+        Serial.print("V, Target Current: ");
+        Serial.print(targetCurrent);
+        Serial.println("A");
+    }
+    else
+    {
+        Serial.println("Error sending CAN command");
+    }
+}
+
+void stopChargerCommand()
+{
+    byte data[8] = {0};
+    data[4] = 0x01; // Control byte: 0x01 = stop charging
+                    // Send CAN message
+    byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
+
+    if (sndStat == CAN_OK)
+    {
+        Serial.println("Stop command sent. Charging stopped");
+        cutoffTriggered = true; // Set cutoff flag
+        chargingStatusText = "Stopped";
+    }
+    else
+    {
+        Serial.println("Stop command failed");
+    }
+}
+
+// Function to process received CAN messages
 void handleReceivingCanbus()
 {
     if (digitalRead(CAN_INT) == LOW)
-    {
+    { // Check for CAN interrupt
         unsigned long id;
         byte len;
         byte msgData[8];
+
         if (CAN.readMsgBuf(&id, &len, msgData) == CAN_OK)
         {
             // Update CAN display data
@@ -16,192 +70,149 @@ void handleReceivingCanbus()
                     webCANData += "0";
                 webCANData += String(msgData[i], HEX) + " ";
             }
-
-            // Update battery data if message length is 8
             if (len == 8)
             {
-
-                // Update charger status based on CAN data
+                // Put here the message processing
+                // if id is equal to
                 decodeChargerBroadcast(msgData, len);
             }
         }
     }
 }
 
-void sendChargerCommand()
-{
-    uint16_t voltageVal = targetVoltage * 10;
-    byte voltage_high = (voltageVal >> 8) & 0xFF;
-    byte voltage_low = voltageVal & 0xFF;
-    uint16_t currentVal = targetCurrent * 10;
-    byte current_high = (currentVal >> 8) & 0xFF;
-    byte current_low = currentVal & 0xFF;
-    byte data[8] = {
-        voltage_high,
-        voltage_low,
-        current_high,
-        current_low,
-        0x00, // Control byte: 0x00 to activate charging
-        0x00, // Mode selector (if needed)
-        0x00, // Reserved
-        0x00  // Reserved
-    };
-    Serial.print("SEND COMMAND: ");
-    Serial.print(targetVoltage, 1);
-    Serial.print("V, ");
-    Serial.print(targetCurrent, 1);
-    Serial.println("A");
-    if (CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data) == CAN_OK)
-    {
-        Serial.print("Send command: ");
-        Serial.print(targetVoltage, 1);
-        Serial.print("V, ");
-        Serial.print(targetCurrent, 1);
-        Serial.println("A");
-    }
-    else
-    {
-        Serial.println("Send failed");
-    }
-}
-
-void stopChargerCommand()
-{
-    byte data[8] = {
-        0x00,
-        0x00,
-        0x00,
-        0x00,
-        0x01, // Control byte: 0x01 indicates stop charging
-        0x00,
-        0x00,
-        0x00};
-
-    if (CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data) == CAN_OK)
-    {
-        Serial.println("Stop command sent, charging stopped");
-    }
-    else
-    {
-        Serial.println("Stop command failed");
-    }
-}
-
 void simulateCanbus(float _batteryVoltage, float _batteryCurrent, bool _state)
 {
-    Serial.print("simulate_canbus:");
-    Serial.println(String(_batteryVoltage, 1) + "," + String(_batteryCurrent, 1) + "," + String(_state));
-    batteryVoltage = _batteryVoltage;
-    batteryCurrent = _batteryCurrent;
-
-    // Parse charging state from byte 4
-    uint8_t state = _state;
-
-    // Update charger status based on CAN data
-
-    if (state == 0)
+    // Set charging status text
+    if (_state)
     {
-        // Charger is active
-        chargerActive = true;
         chargingStatusText = "Charging";
+        chargerActive = true;
+        // Start Cutoff verification
+        if (_batteryCurrent < cutoffCurrent)
+        {
+            // Start the timer
+            if (!checkingCutoff)
+            {
+                cutoffStartTime = millis();
+                checkingCutoff = true;
+            }
+            else if ((millis() - cutoffStartTime) >= delayCutoff)
+            { // If low current last more than delay, stop charging
+                stopCharger();
+                cutoffTriggered = true;
+                chargingStatusText = "CutOff";
+            }
+        }
+        else
+        { // Reset the cutoff
+            checkingCutoff = false;
+        }
     }
     else
     {
-        // Charger is stopped
-        chargerActive = false;
         chargingStatusText = "Stopped";
-        checkingCutoff = false; // Reset cutoff checking
     }
 
-    Serial.println("-------------------------------------");
-    Serial.print("State from CAN: ");
-    Serial.println(state);
-    Serial.print("Charger Active: ");
-    Serial.println(chargerActive ? "Yes" : "No");
-    Serial.print("Voltage: ");
-    Serial.print(batteryVoltage);
-    Serial.println(" V");
-    Serial.print("Current: ");
-    Serial.print(batteryCurrent);
-    Serial.println(" A");
-    Serial.println("-------------------------------------");
+    // Create CAN message, state: 1 charging, 0: stop
+    byte data[8] = {0};
+    uint16_t voltageVal = _batteryVoltage * 10; // scale the voltage
+    data[0] = highByte(voltageVal);
+    data[1] = lowByte(voltageVal);
+    uint16_t currentVal = _batteryCurrent * 10; // scale the current
+    data[2] = highByte(currentVal);
+    data[3] = lowByte(currentVal);
+    // byte 4 and 5 as status flag, 0 for charge, 1 for discharge.
+    if (_state)
+    {
+        data[4] = 0x00;
+        data[5] = 0x00;
+    }
+    else
+    {
+        data[4] = 0x01;
+        data[5] = 0x01;
+    }
+    data[6] = 0x00;
+    data[7] = 0x00;
+
+    byte sndStat = CAN.sendMsgBuf(0x98FF50E5, 1, 8, data);
+    if (sndStat == CAN_OK)
+    {
+        Serial.print("Sent Simulate CAN message. Voltage: ");
+        Serial.print(_batteryVoltage);
+        Serial.print("V, Current: ");
+        Serial.print(_batteryCurrent);
+        Serial.print("A. State: ");
+        Serial.print(_state);
+    }
+    else
+    {
+        Serial.println("Error sending Simulate CAN message");
+    }
 }
 
-// --- Function to decode the charger broadcast message (Report 2) ---
 void decodeChargerBroadcast(byte msgData[], byte len)
 {
-    if (len != 8)
-    {
-        Serial.println("Error: Charger broadcast message has incorrect length.");
-        return; // Exit if the message length is wrong
-    }
 
     // --- Decode Voltage ---
     uint16_t voltageRaw = (msgData[0] << 8) | msgData[1];
-    batteryVoltage = voltageRaw * 0.1f;
+    batteryVoltage = voltageRaw * 0.1f; // Apply scaling
 
     // --- Decode Current ---
     uint16_t currentRaw = (msgData[2] << 8) | msgData[3];
-    batteryCurrent = currentRaw * 0.1f;
+    batteryCurrent = currentRaw * 0.1f; // Apply scaling
 
-    // --- Decode Status Flag (Byte 5) ---
+    // --- Parse and Interpret the STATUS Flag (Byte 5) ---
     byte statusByte = msgData[4];
-    bool hardwareFailure = (statusByte >> 0) & 0x01;
-    bool chargerTemp = (statusByte >> 1) & 0x01;
-    bool inputVoltage = (statusByte >> 2) & 0x01;
-    bool startState = (statusByte >> 3) & 0x01;
-    bool communicationTimeout = (statusByte >> 4) & 0x01;
+    hardwareFailure = (statusByte >> 0) & 0x01;
+    chargerTemp = (statusByte >> 1) & 0x01;
+    inputVoltage = (statusByte >> 2) & 0x01;
+    startState = (statusByte >> 3) & 0x01;
+    communicationTimeout = (statusByte >> 4) & 0x01;
 
-    // --- Update chargerActive and chargingStatusText ---
-    if (!startState && !communicationTimeout)
+    if (!startState)
     {
-        chargerActive = true;
+        chargingObcState = true;
         chargingStatusText = "Charging";
     }
     else
     {
-        chargerActive = false;
+        chargingObcState = false;
         chargingStatusText = "Stopped";
-        if (hardwareFailure)
-        {
-            chargingStatusText += " (Hardware Failure)";
-        }
-        if (chargerTemp)
-        {
-            chargingStatusText += " (Overtemperature)";
-        }
-        if (inputVoltage)
-        {
-            chargingStatusText += " (Input Voltage Problem)";
-        }
-        if (communicationTimeout)
-        {
-            chargingStatusText += " (Comm Timeout)";
-        }
-        checkingCutoff = false; // Reset if you're using this
+        checkingCutoff = false;
     }
+    printDecodeDataObc();
+}
 
-    // --- Print Diagnostic Information (Optional, but very helpful) ---
-    Serial.println("------ OBC RESPOND ------");
-    Serial.print("Voltage: ");
+void printDecodeDataObc()
+{
+    Serial.println();
+    Serial.println("=================================================");
+    Serial.print("Battery Voltage: ");
     Serial.print(batteryVoltage);
     Serial.println(" V");
-    Serial.print("Current: ");
+
+    Serial.print("Battery Current: ");
     Serial.print(batteryCurrent);
     Serial.println(" A");
+
     Serial.print("Hardware Failure: ");
     Serial.println(hardwareFailure ? "Yes" : "No");
-    Serial.print("Charger Temp: ");
-    Serial.println(chargerTemp ? "Overtemp" : "Normal");
-    Serial.print("Input Voltage: ");
-    Serial.println(inputVoltage ? "Problem" : "Normal");
+
+    Serial.print("Charger Overtemperature: ");
+    Serial.println(chargerTemp ? "Yes" : "No");
+
+    Serial.print("Input Voltage Issue: ");
+    Serial.println(inputVoltage ? "Yes" : "No");
+
     Serial.print("Start State: ");
-    Serial.println(startState ? "Off" : "Starting/On");
-    Serial.print("Comm Timeout: ");
+    Serial.println(startState ? "Stopped" : "Charging");
+
+    Serial.print("Communication Timeout: ");
     Serial.println(communicationTimeout ? "Yes" : "No");
-    Serial.print("Charger Active: ");
-    Serial.println(chargerActive ? "Yes" : "No");
-    Serial.print("Status: ");
+
+    Serial.print("Charging Status: ");
     Serial.println(chargingStatusText);
-    Serial.println("--------------------------------------------");
+    Serial.println("=================================================");
+    Serial.println();
 }

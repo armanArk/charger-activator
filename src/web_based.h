@@ -1,7 +1,7 @@
 /*
 NOTES:
-SESUAIKAN DAHULU DENGAN SPESIFIKASI RATING MAKSIMUM DARI CHARGER/BATTERY UNTUK SAFETY KESALAHAN INPUT VOLTAGE/CURRENT
-VARIABLE DARI MAX_ALLOWED_VOLTAGE MAX_ALLOWED_CURRENT
+SESUAIKAN DAHULU DENGAN SPESIFIKASI RATING MAKSIMUM DARI CHARGER/BATTERY UNTUK SAFETY! KESALAHAN INPUT VOLTAGE/CURRENT
+VARIABLE DARI MAX_ALLOWED_VOLTAGE MAX_ALLOWED_CURRENT BISA MENYEBABKAN KERUSAKAN ATAU BAHAYA!
 */
 
 #include <SPI.h>
@@ -10,53 +10,8 @@ VARIABLE DARI MAX_ALLOWED_VOLTAGE MAX_ALLOWED_CURRENT
 #include <WebServer.h>
 #include <Preferences.h> // Library for internal (non-volatile) storage
 
-#define CAN_CS 5  // Chip Select pin for CAN
-#define CAN_INT 4 // Interrupt pin for CAN
-
-MCP_CAN CAN(CAN_CS); // Create CAN instance
-
-// ----- Shared Preferences Setup -----
-Preferences preferences;
-
-// ----- WiFi & Web Server Setup -----
-const char *ssid = "enpowerCharger2";
-// const char *ssid = "ra6pCharger";
-const char *password = "password123";
-WebServer server(80);
-
-const float CELL_VOLTAGE = 3.5; // Maximum per-cell voltage
-const int NUM_CELLS = 120;      // 32S configuration
-
-// HARUS DISESUAIKAN DENGAN SPESIFIKASI MAKSIMUM DARI CHARGER
-const float MAX_ALLOWED_VOLTAGE = NUM_CELLS * CELL_VOLTAGE; // Maximum allowed voltage (115.2V)
-const float MAX_ALLOWED_CURRENT = 5;                        // Maximum allowed current
-
-// Charging parameters (default values)
-float targetVoltage = MAX_ALLOWED_VOLTAGE; // Default target voltage
-float targetCurrent = 6;                   // Default target current
-
-// ----- Other Global Variables -----
-unsigned long pmillis = 0;             // For timing the CAN command transmissions
-bool chargerActive = false;            // Charging flag (true = charging, false = stopped)
-String chargingStatusText = "Stopped"; // Charging status text for display
-
-// Global variables for web display
-String webCANId = "";
-String webCANData = "";
-float batteryVoltage = 0.0;
-float batteryCurrent = 0.0;
-
-// Charging current cutoff
-float cutoffCurrent = 4.0;               // Default cutoff current
-unsigned long cutoffStartTime = 0;       // Timer untuk cutoff
-bool checkingCutoff = false;             // Flag pengecekan cutoff
-bool cutoffTriggered = false;            // Flag untuk menandai bahwa cutoff telah terjadi
-const unsigned long delayCutoff = 30000; // Delay cutoff dalam milidetik
-unsigned long uptime;
-
-#define CHARGER_CONTROL_ID 0x1806E5F4
-byte sendCanCounter = 0;
 // ----- Function Prototypes -----
+// must be defined here to avoid undefined reference
 void handleRoot();
 void handleSet();
 void handleControl();
@@ -69,10 +24,170 @@ void handleReceivingCanbus();
 void simulateCanbus(float _batteryVoltage, float _batteryCurrent, bool _state);
 void serialLoop();
 void decodeChargerBroadcast(byte msgData[], byte len);
+bool keyExists(const char *input, const char *key);          // utility function
+const char *getValueKey(const char *input, const char *key); // utility function
+void printDecodeDataObc();
 
-#include <handle_web.h>
-#include <handle_canbus.h>
+// ----- Pin Definitions -----
+#define CAN_CS 5       // Chip Select pin for CAN
+#define CAN_INT 4      // Interrupt pin for CAN
+#define S2_CTRL_PIN 12 // S2 CONTROL
+#define CP_ADC_PIN 34  // CP after voltage divider
+#define CP_COMP_PIN 26 // measure the pulse width of CP signal
 
+// ----- CAN Bus Setup -----
+MCP_CAN CAN(CAN_CS); // Create CAN instance
+
+// ----- Shared Preferences Setup -----
+Preferences preferences;
+
+// ----- WiFi & Web Server Setup -----
+const char *ssid = "controlOBC";
+const char *password = "password123";
+WebServer server(80);
+
+// ----- Constants -----
+const float CELL_VOLTAGE = 3.5;                             // Maximum per-cell voltage
+const int NUM_CELLS = 120;                                  // Example: 32S configuration.  CHANGE THIS!
+const float MAX_ALLOWED_VOLTAGE = NUM_CELLS * CELL_VOLTAGE; // Calculated maximum allowed voltage
+const float MAX_ALLOWED_CURRENT = 5;                        // Maximum allowed current.  CHANGE THIS!
+#define CHARGER_CONTROL_ID 0x1806E5F4                       // CAN ID for sending commands TO the charger (Report 1)
+#define BMS_CONTROL_ID 0x1806E5F4                           // CAN ID for receive command from bms
+
+// ----- Global Variables -----
+float targetVoltage = MAX_ALLOWED_VOLTAGE; // Default target voltage
+float targetCurrent = 6;                   // Default target current
+unsigned long pmillis = 0;                 // For timing the CAN command transmissions
+bool chargerActive = false;                // Charging flag (true = charging, false = stopped)
+String chargingStatusText = "Stopped";     // Charging status text for display
+float cutoffCurrent = 4.0;                 // Default cutoff current
+unsigned long cutoffStartTime = 0;         // Timer for cutoff
+bool checkingCutoff = false;               // Flag for cutoff checking
+bool cutoffTriggered = false;              // Flag to indicate that cutoff has occurred
+const unsigned long delayCutoff = 30000;   //  30 seconds
+unsigned long uptime;
+bool chargingObcState = false;
+
+// CP S2 HANDLING
+float cpVoltage = 0.0f; // To store the measured CP voltage
+
+// Variables for web display
+String webCANId = "";
+String webCANData = "";
+float batteryVoltage = 0.0f;
+float batteryCurrent = 0.0f;
+bool hardwareFailure = false;
+bool chargerTemp = false;
+bool inputVoltage = false;
+bool startState = false;
+bool communicationTimeout = false;
+
+#include "handle_canbus.h"
+#include "handle_web.h"
+
+// Ambang batas dengan Histeresis (Sesuaikan berdasarkan pengukuran Anda)
+const float STATE_A_HIGH = 1.85; // Transisi ke State A di atas tegangan ini
+const float STATE_A_LOW = 1.75;
+const float STATE_B_HIGH = 1.32; // Transisi ke State B di atas ini (dari A)
+const float STATE_B_LOW = 1.22;
+const float STATE_C_HIGH = 1.12; // Transisi ke State C di atas ini
+const float STATE_C_LOW = 0.7;   // Transisi ke state lain
+const float STATE_D_HIGH = 0.6;  // Tidak digunakan dalam DC fast charging
+const float STATE_D_LOW = 0.2;
+const float STATE_E_HIGH = 0.1; // < 0.1V
+
+// Enum untuk merepresentasikan status CP saat ini
+enum CPState
+{
+  STATE_A,
+  STATE_B,
+  STATE_B2, // Status B dengan PWM, transisi
+  STATE_C,
+  STATE_D, // Not used
+  STATE_E,
+  STATE_F
+};
+
+CPState currentState = STATE_A; // Status awal
+
+// ----- Fungsi untuk menangani CP/PP -----
+void handleCP()
+{
+  // 1. Baca Tegangan CP:
+  int adcValue = analogRead(CP_ADC_PIN);
+  float cpVoltage = (float)adcValue * (3.3 / 4095.0); // Konversi ke tegangan (asumsi referensi 3.3V)
+
+  Serial.print("CP Voltage: ");
+  Serial.println(cpVoltage);
+
+  // 2. Tentukan Status CP (dengan Histeresis):
+  switch (currentState)
+  {
+  case STATE_A:
+    if (cpVoltage < STATE_A_LOW)
+    {
+      currentState = STATE_B;
+      Serial.println("State B (Mated)");
+      delay(1000); // Debounce
+      // Simulate ready to charge.
+      digitalWrite(S2_CTRL_PIN, HIGH); // Simulate State C
+      currentState = STATE_C;
+      Serial.println("Signaling State C (Ready to Charge)");
+    }
+    break;
+
+  case STATE_B:
+    if (cpVoltage > STATE_A_HIGH)
+    {
+      currentState = STATE_A;
+      Serial.println("State A (Unmated)");
+    }
+    else if (cpVoltage < STATE_B_LOW)
+    {
+      // Here, you can check if it is C or D
+      if (cpVoltage > STATE_C_HIGH)
+      {
+        currentState = STATE_C;
+        Serial.println("State C (Ready to Charge)");
+      }
+      else if (cpVoltage > STATE_D_HIGH)
+      {
+        currentState = STATE_D;
+        Serial.println("State D");
+      }
+      else
+      {
+        currentState = STATE_E;
+        Serial.println("State E/A (Fault/Disconnected)");
+      }
+    }
+    break;
+  case STATE_C: // Only check for state out
+    if (cpVoltage > STATE_B_HIGH)
+    {
+      currentState = STATE_B;
+      Serial.println("State B (Mated)");
+      digitalWrite(S2_CTRL_PIN, LOW); // Ensure to change to correct state
+    }
+    else if (cpVoltage < STATE_C_LOW)
+    {
+      currentState = STATE_E;
+      Serial.println("State E/A (Fault/Disconnected)");
+      digitalWrite(S2_CTRL_PIN, LOW); // Ensure to change to correct state
+    }
+    break;
+  // Add other states here
+  default:
+    if (cpVoltage > STATE_A_HIGH)
+    {
+      currentState = STATE_A;
+      Serial.println("State A (Unmated)");
+    }
+    break;
+  }
+}
+
+// ----- Setup -----
 void setup()
 {
   Serial.begin(115200);
@@ -116,50 +231,41 @@ void setup()
   server.begin();
 }
 
-// Di loop utama
+// ----- Main Loop -----
 void loop()
 {
-  server.handleClient();
-  serialLoop();
-  // Periodic CAN command sending
+  server.handleClient(); // Handle web server requests
+  serialLoop();          // Handle Serial Port
+
+  // Periodic CAN command sending (every 1 second)
   if (millis() - pmillis > 1000)
   {
     pmillis = millis();
-    uptime = millis() / 1000;
-    sendCanCounter += 1;
+    uptime = millis() / 1000; // seconds
     if (chargerActive)
     {
       sendChargerCommand();
     }
-
-    // if (sendCanCounter >= 3)
-    // {
-    //   sendCanCounter = 0;
-    //   if (chargerActive)
-    //   {
-    //     sendChargerCommand();
-    //   }
-    // }
   }
 
-  handleReceivingCanbus();
+  handleReceivingCanbus(); // Check for incoming CAN messages
 
-  // Logika Cutoff yang diperbaiki
+  // Cutoff logic (Corrected)
   if (chargerActive && !cutoffTriggered)
   {
     // if (batteryCurrent < cutoffCurrent)
     // {
-    //   // Mulai timer jika belum dimulai
+    //   // Start the timer if it hasn't started yet
     //   if (!checkingCutoff)
     //   {
     //     cutoffStartTime = millis();
     //     checkingCutoff = true;
     //     Serial.println("Start monitoring low current...");
     //   }
-    //   // Cek apakah sudah 10 detik kontinyu
+    //   // Check if 10 seconds have passed continuously
     //   else if ((millis() - cutoffStartTime) >= delayCutoff)
     //   {
-    //     // Trigger cutoff setelah 10 detik
+    //     // Trigger the cutoff
     //     stopCharger();
     //     cutoffTriggered = true;
     //     chargingStatusText = "cutoff current";
@@ -179,7 +285,7 @@ void loop()
     // }
     // else
     // {
-    //   // Reset timer jika arus naik di atas cutoff
+    //   // Reset timer if current rises above cutoff
     //   if (checkingCutoff)
     //   {
     //     checkingCutoff = false;
@@ -192,8 +298,10 @@ void loop()
     checkingCutoff = false;
   }
 
-  delay(100);
+  delay(100); // Short delay
 }
+
+// ----- Function Implementations -----
 
 void startCharger()
 {
@@ -212,89 +320,4 @@ void stopCharger()
   cutoffTriggered = false; // Clear any previous cutoff trigger
   chargingStatusText = "Stopped";
   Serial.println("Charger stopped");
-}
-bool keyExists(const char *input, const char *key)
-{
-  size_t keyLength = strlen(key) + 1;
-  char keyWithColon[keyLength + 1];
-  strcpy(keyWithColon, key);
-  strcat(keyWithColon, ":");
-  return strncmp(input, keyWithColon, keyLength) == 0;
-}
-
-const char *getValueKey(const char *input, const char *key)
-{
-  size_t keyLength = strlen(key) + 1;
-  return input + keyLength;
-}
-void serialLoop()
-{
-  static char dat[2548];   // Buffer untuk menampung data serial
-  static int datIndex = 0; // Indeks untuk buffer, statis agar tersimpan antar panggilan
-
-  while (Serial.available() > 0)
-  {
-    char incomingChar = Serial.read();
-
-    // Pastikan indeks tidak melebihi ukuran buffer
-    if (datIndex < sizeof(dat) - 1)
-    {
-      dat[datIndex++] = incomingChar;
-    }
-    else
-    {
-      Serial.println("Warning: Buffer overflow, reset buffer");
-      datIndex = 0; // Reset jika terjadi overflow
-    }
-
-    // Jika ditemukan karakter newline, proses pesan yang telah diterima
-    if (incomingChar == '\n')
-    {
-      // Jika ada double newline, lewati pesan kosong
-      if (datIndex > 1 && dat[datIndex - 2] == '\n')
-      {
-        datIndex = 0; // Reset buffer agar tidak terus menumpuk
-        continue;
-      }
-      dat[datIndex - 1] = '\0'; // Null-terminate string
-
-      // Cek apakah pesan mengandung key "WRITE_SIMULATE"
-      if (keyExists(dat, "WRITE_SIMULATE"))
-      {
-        const char *value = getValueKey(dat, "WRITE_SIMULATE");
-        String fullValue = String(value);
-
-        // Mencari posisi koma untuk mem-parsing parameter
-        int firstComma = fullValue.indexOf(',');
-        int secondComma = fullValue.indexOf(',', firstComma + 1);
-
-        // Validasi posisi koma
-        if (firstComma == -1 || secondComma == -1)
-        {
-          Serial.println("Error: Format tidak valid. Format yang diharapkan: 'status,voltage,current'");
-          datIndex = 0; // Reset buffer setelah error
-          continue;     // Hentikan pemrosesan jika format salah
-        }
-
-        // Mengkonversi nilai parameter
-        bool _status = fullValue.substring(0, firstComma).toInt();
-        float _voltage = fullValue.substring(firstComma + 1, secondComma).toFloat();
-        float _current = fullValue.substring(secondComma + 1).toFloat();
-
-        // Tampilkan data pada Serial Monitor
-        Serial.print("status:");
-        Serial.print(String(_status));
-        Serial.print(", volt:");
-        Serial.print(String(_voltage));
-        Serial.print(", curr:");
-        Serial.println(String(_current));
-
-        // Panggil fungsi simulasi CAN bus dengan nilai yang telah diparsing
-        simulateCanbus(_voltage, _current, _status);
-      }
-
-      // Reset buffer agar siap untuk membaca pesan berikutnya
-      datIndex = 0;
-    }
-  }
 }
