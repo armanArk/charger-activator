@@ -33,7 +33,7 @@ void printDecodeDataObc();
 #define CAN_INT 4      // Interrupt pin for CAN
 #define S2_CTRL_PIN 12 // S2 CONTROL
 #define CP_ADC_PIN 34  // CP after voltage divider
-#define CP_COMP_PIN 26 // measure the pulse width of CP signal
+#define CP_COMP_PIN 27 // measure the pulse width of CP signal
 
 // ----- CAN Bus Setup -----
 MCP_CAN CAN(CAN_CS); // Create CAN instance
@@ -50,7 +50,7 @@ WebServer server(80);
 const float CELL_VOLTAGE = 3.5;                             // Maximum per-cell voltage
 const int NUM_CELLS = 120;                                  // Example: 32S configuration.  CHANGE THIS!
 const float MAX_ALLOWED_VOLTAGE = NUM_CELLS * CELL_VOLTAGE; // Calculated maximum allowed voltage
-const float MAX_ALLOWED_CURRENT = 5;                        // Maximum allowed current.  CHANGE THIS!
+const float MAX_ALLOWED_CURRENT = 16;                       // Maximum allowed current.  CHANGE THIS!
 #define CHARGER_CONTROL_ID 0x1806E5F4                       // CAN ID for sending commands TO the charger (Report 1)
 #define BMS_CONTROL_ID 0x1806E5F4                           // CAN ID for receive command from bms
 
@@ -81,7 +81,7 @@ bool chargerTemp = false;
 bool inputVoltage = false;
 bool startState = false;
 bool communicationTimeout = false;
-
+bool isActiveOnStartup = false;
 #include "handle_canbus.h"
 #include "handle_web.h"
 
@@ -210,6 +210,7 @@ void setup()
   targetVoltage = preferences.getFloat("targetVoltage", targetVoltage);
   targetCurrent = preferences.getFloat("targetCurrent", targetCurrent);
   cutoffCurrent = preferences.getFloat("cutoffCurrent", cutoffCurrent);
+  isActiveOnStartup = preferences.getBool("onStartup", isActiveOnStartup);
 
   Serial.print("Loaded target voltage: ");
   Serial.println(targetVoltage);
@@ -217,7 +218,8 @@ void setup()
   Serial.println(targetCurrent);
   Serial.print("Loaded target cutoff current: ");
   Serial.println(cutoffCurrent);
-
+  Serial.print("Loaded target isAutoStartUp: ");
+  Serial.println(isActiveOnStartup);
   // Initialize WiFi in Access Point mode
   WiFi.softAP(ssid, password);
   Serial.print("AP IP address: ");
@@ -229,6 +231,12 @@ void setup()
   server.on("/control", handleControl);
   server.on("/data", handleData);
   server.begin();
+
+  // activate the charging whenever isactiveOnstartup is on
+  if (isActiveOnStartup)
+  {
+    startCharger();
+  }
 }
 
 // ----- Main Loop -----
@@ -244,7 +252,7 @@ void loop()
     uptime = millis() / 1000; // seconds
     if (chargerActive)
     {
-      sendChargerCommand();
+      // sendChargerCommand();
     }
   }
 

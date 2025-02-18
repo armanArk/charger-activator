@@ -70,6 +70,11 @@ void handleReceivingCanbus()
                     webCANData += "0";
                 webCANData += String(msgData[i], HEX) + " ";
             }
+            Serial.print("canId:");
+            Serial.println(webCANId);
+            Serial.print("canData:");
+            Serial.println(webCANData);
+
             if (len == 8)
             {
                 // Put here the message processing
