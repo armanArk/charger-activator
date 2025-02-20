@@ -1,38 +1,3 @@
-#include <Arduino.h>
-
-// Pin Definitions
-const uint8_t ADC_PIN = 35;       // ADC input pin
-const uint8_t FREQUENCY_PIN = 34; // PWM input pin
-const uint8_t S2_CTRL_PIN = 12;   // Control pin
-
-// Constants
-const float VREF = 3.3;                     // ADC Reference voltage
-const float CP_SCALING_FACTOR = 6.16 / 2.0; // CP voltage mapping
-const unsigned long UPDATE_INTERVAL = 1000; // Frequency update interval (ms)
-const unsigned long PEAK_INTERVAL = 200;    // Peak voltage update interval (ms)
-
-// Global variables
-volatile unsigned long pulseCount = 0;
-volatile unsigned long highTime = 0;
-volatile unsigned long lowTime = 0;
-unsigned long lastEdgeTime = 0;
-unsigned long lastFrequencyUpdate = 0;
-unsigned long lastPeakReset = 0;
-
-float frequency = 0;
-float dutyCycle = 0;
-float currentPeak = 0.01; // Avoid sudden zero issues
-float peakVoltage = 0.01;
-
-// Function prototypes
-void initializeHardware();
-float readVoltage();
-float convertAdcToCpVoltage(float adcVoltage);
-float updatePeakVoltage();
-void updateFrequencyAndDutyCycle();
-void handleSerialCommands();
-float getMaxCurrent(float dutyCycle);
-String getCPStatus(float voltage);
 
 float getMaxCurrent(float dutyCycle)
 {
@@ -66,7 +31,6 @@ String getCPStatus(float voltage)
 
     return "E";
 }
-
 // Convert ADC voltage to real CP voltage
 float convertAdcToCpVoltage(float adcVoltage)
 {
@@ -100,9 +64,8 @@ void IRAM_ATTR handleInterrupt()
 }
 
 // Initialize hardware
-void initializeHardware()
+void initializeCP()
 {
-    Serial.begin(115200);
 
     pinMode(ADC_PIN, INPUT);
     analogSetAttenuation(ADC_11db);
@@ -170,11 +133,7 @@ void updateFrequencyAndDutyCycle()
         Serial.print(frequency);
         Serial.print(F(" Hz, Duty Cycle: "));
         Serial.print(dutyCycle, 1);
-        Serial.print(F("%, "));
-        Serial.print("state:");
-        Serial.print(getCPStatus(convertAdcToCpVoltage(peakVoltage)));
-        Serial.print(", max CC:");
-        Serial.println(getMaxCurrent(dutyCycle));
+        Serial.println(F("%"));
     }
 }
 
@@ -198,16 +157,4 @@ void handleSerialCommands()
             break;
         }
     }
-}
-
-void setup()
-{
-    initializeHardware();
-}
-
-void loop()
-{
-    handleSerialCommands();
-    updatePeakVoltage();
-    updateFrequencyAndDutyCycle();
 }

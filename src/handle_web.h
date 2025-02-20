@@ -102,6 +102,21 @@ void handleRoot()
   html += "    });";
   html += "}";
 
+  // Tambahkan fungsi JavaScript untuk toggle CP Mode (dalam bagian <script>)
+  html += "function toggleCPMode(checkbox) {";
+  html += "  fetch('/set?modeCp=' + checkbox.checked)";
+  html += "    .then(response => {";
+  html += "      if (!response.ok) {";
+  html += "        checkbox.checked = !checkbox.checked;";
+  html += "        alert('Failed to update CP Mode');";
+  html += "      }";
+  html += "    })";
+  html += "    .catch(error => {";
+  html += "      checkbox.checked = !checkbox.checked;";
+  html += "      console.error('Error:', error);";
+  html += "    });";
+  html += "}";
+
   html += "setInterval(updateData, 1000);";
   html += "</script>";
   html += "</head><body>";
@@ -167,6 +182,20 @@ void handleRoot()
   html += "</ul>";
   html += "</div>";
 
+  // CP signal information
+  html += "<div class='card'>";
+  html += "<h2>CP Signal Information</h2>";
+  html += "<ul class='info-list'>";
+  html += "<li><strong>Peak Voltage:</strong> <span id='cp-peak-voltage'> " + String(peakVoltage, 1) + "</span> V</li>";
+  html += "<li><strong>Frequency:</strong> <span id='cp-frequency'>" + String(frequency, 1) + " </span> Hz</li>";
+  html += "<li><strong>Duty Cycle:</strong> <span id='cp-duty-cycle'>" + String(dutyCycle, 1) + "</span> %</li>";
+  html += "<li><strong>CP volt:</strong> <span id='cp-duty-cycle'>" + String(convertAdcToCpVoltage(peakVoltage)) + "</span> V</li>";
+  html += "<li><strong>EVSE State:</strong> <span id='cp-duty-cycle'>" + getCPStatus(convertAdcToCpVoltage(peakVoltage)) + "</span> V</li>";
+  html += "<li><strong>max pwm current:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrent(dutyCycle)) + "</span> A</li>";
+
+  html += "</ul>";
+  html += "</div>";
+
   // Parameters Card
   html += "<div class='card'>";
   html += "<h2>Charger Parameters</h2>";
@@ -176,28 +205,44 @@ void handleRoot()
   html += "<div><label>Target Voltage (V)</label><input type='number' step='0.1' name='v' id='targetVoltage' min='30' max='" + String(MAX_ALLOWED_VOLTAGE, 1) + "' value='" + String(targetVoltage, 1) + "'></div>";
   html += "<div><label>Target Current (A)</label><input type='number' step='0.1' name='c' id='targetCurrent' min='1' max='" + String(MAX_ALLOWED_CURRENT, 1) + "' value='" + String(targetCurrent, 1) + "'></div>";
   html += "</div>";
-
   html += "<input type='submit' value='Update Parameters' style='margin-top: 15px'>";
-
-  // Switch with proper event handling
-  html += "<div style='margin-top: 15px'>";
-  html += "<label>auto charging on startup: ";
-  html += "<label class='switch'>";
-  html += "<input type='checkbox' name='active' id='isActiveOnStartup' " + String(isActiveOnStartup ? "checked" : "") + " onchange='toggleSwitch(this)'>";
-  html += "<span class='slider'></span>";
-  html += "</label></label>";
-  html += "</div>";
-
   html += "</form>";
   html += "</div>";
 
-  // Control Card
+  // Control Card - Modified to include both switches
   html += "<div class='card'>";
   html += "<h2>Control</h2>";
+
+  // Switch container with improved layout
+  html += "<div style='margin-bottom: 20px;'>";
+
+  // First switch with improved layout
+  html += "<div style='display: flex; align-items: center; margin-bottom: 12px;'>";
+  html += "<span style='flex: 1; font-size: 0.9em;'>charging on startup (wont active if cp mode enabled):</span>";
+  html += "<label class='switch' style='margin-left: 10px;'>";
+  html += "<input type='checkbox' id='isActiveOnStartup' " + String(isActiveOnStartup ? "checked" : "") + " onchange='toggleSwitch(this)'>";
+  html += "<span class='slider'></span>";
+  html += "</label>";
+  html += "</div>";
+
+  // Second switch with matching layout
+  html += "<div style='display: flex; align-items: center; margin-bottom: 12px;'>";
+  html += "<span style='flex: 1; font-size: 0.9em;'>CP Mode:</span>";
+  html += "<label class='switch' style='margin-left: 10px;'>";
+  html += "<input type='checkbox' id='modeCp' " + String(modeCp ? "checked" : "") + " onchange='toggleCPMode(this)'>";
+  html += "<span class='slider'></span>";
+  html += "</label>";
+  html += "</div>";
+
+  html += "</div>";
+
+  // Keep the existing buttons
   html += "<div class='button-group'>";
   html += "<button onclick=\"location.href='/control?cmd=start'\">Start Charging</button>";
   html += "<button onclick=\"location.href='/control?cmd=stop'\">Stop Charging</button>";
+  html += "<button onclick=\"location.href='/control?cmd=restart'\">Restart</button>";
   html += "</div>";
+
   html += "</div>";
 
   html += "</body></html>";
@@ -260,12 +305,40 @@ void handleSet()
 
   // Handle the startup toggle switch.
   // If the checkbox "active" is present in the GET request, it is checked (true); if not, it is false.
+  // Fixed auto-startup switch handling
   if (server.hasArg("active"))
   {
-    isActiveOnStartup = server.hasArg("active");
-    preferences.putBool("onStartup", isActiveOnStartup);
-    Serial.print("Updated isActiveOnStartup: ");
-    Serial.println(isActiveOnStartup ? "true" : "false");
+    String activeValue = server.arg("active");
+    if (activeValue == "true" || activeValue == "false")
+    {
+      isActiveOnStartup = (activeValue == "true");
+      preferences.putBool("onStartup", isActiveOnStartup);
+      Serial.print("Updated isActiveOnStartup: ");
+      Serial.println(isActiveOnStartup ? "true" : "false");
+    }
+    else
+    {
+      valid = false;
+      errorMsg += "Invalid active value. ";
+    }
+  }
+
+  // Tambahkan penanganan untuk modeCp
+  if (server.hasArg("modeCp"))
+  {
+    String modeCpValue = server.arg("modeCp");
+    if (modeCpValue == "true" || modeCpValue == "false")
+    {
+      cpModeEnabled = (modeCpValue == "true");
+      preferences.putBool("cpMode", cpModeEnabled);
+      Serial.print("Updated modeCp: ");
+      Serial.println(cpModeEnabled ? "true" : "false");
+    }
+    else
+    {
+      valid = false;
+      errorMsg += "Invalid modeCp value. ";
+    }
   }
 
   if (!valid)
@@ -289,8 +362,8 @@ void handleData()
   json += "\"chargingStatus\":\"" + chargingStatusText + "\",";
   json += "\"targetVoltage\":" + String(targetVoltage, 1) + ",";
   json += "\"targetCurrent\":" + String(targetCurrent, 1) + ",";
-  // Include the current state of isActiveOnStartup in the JSON response.
   json += "\"isActiveOnStartup\":" + String(isActiveOnStartup ? "true" : "false");
+  json += "\"modeCp\":" + String(modeCp ? "true" : "false");
   json += "}";
   server.send(200, "application/json", json);
 }
@@ -307,6 +380,13 @@ void handleControl()
     else if (cmd == "stop")
     {
       stopCharger();
+    }
+    else if (cmd == "restart")
+    {
+      Serial.println("Restarting ESP32...");
+      server.send(200, "text/plain", "Restarting...");
+      delay(100); // Ensure response is sent
+      ESP.restart();
     }
   }
   server.sendHeader("Location", "/", true);

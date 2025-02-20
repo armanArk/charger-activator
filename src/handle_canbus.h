@@ -1,5 +1,46 @@
 // --- CAN Bus Functions ---
+void sendChargerCommand(float voltage, float current, bool startCharging = true)
+{
+    // Use provided parameters or fall back to global variables
+    float commandVoltage = voltage > 0 ? voltage : targetVoltage;
+    float commandCurrent = current > 0 ? current : targetCurrent;
 
+    // Create CAN message to control the charger (Report 1)
+    byte data[8] = {0};
+
+    // Scale and convert voltage (0.1V per bit)
+    uint16_t voltageVal = commandVoltage * 10;
+    data[0] = highByte(voltageVal); // High byte of voltage
+    data[1] = lowByte(voltageVal);  // Low byte of voltage
+
+    // Scale and convert current (0.1A per bit)
+    uint16_t currentVal = commandCurrent * 10;
+    data[2] = highByte(currentVal); // High byte of current
+    data[3] = lowByte(currentVal);  // Low byte of current
+
+    // Control byte: 0x00 = start charging, 0x01 = stop
+    data[4] = startCharging ? 0x00 : 0x01;
+
+    // Bytes 5-7: Reserved (data[5] reserved for heating contactor)
+    data[5] = 0x00;
+    data[6] = 0x00;
+    data[7] = 0x00;
+
+    // Send CAN message
+    byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
+    if (sndStat == CAN_OK)
+    {
+        Serial.print("Sent CAN command. Target Voltage: ");
+        Serial.print(commandVoltage);
+        Serial.print("V, Target Current: ");
+        Serial.print(commandCurrent);
+        Serial.println("A");
+    }
+    else
+    {
+        Serial.println("Error sending CAN command");
+    }
+}
 void sendChargerCommand()
 {
     // Create CAN message to control the charger (Report 1)

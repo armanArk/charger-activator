@@ -30,7 +30,7 @@ void setup()
     ledcAttachPin(ledc_pin, ledc_channel);                // Attach GPIO23 to channel 0
 
     // Initialize duty cycle
-    ledcWrite(ledc_channel, 230); // Set initial duty cycle to 50%
+    ledcWrite(ledc_channel, DUTY_C); // Set initial duty cycle to 50%
 }
 
 void loop()
@@ -53,11 +53,11 @@ void loop()
             Serial.println("Error: Duty cycle must be 0-255");
         }
     }
-    int duty_levels[] = {DUTY_A, DUTY_B, DUTY_C, DUTY_D, DUTY_E, DUTY_F, DUTY_G, DUTY_H, DUTY_I, DUTY_J};
+    // int duty_levels[] = {DUTY_A, DUTY_B, DUTY_C, DUTY_D, DUTY_E, DUTY_F, DUTY_G, DUTY_H, DUTY_I, DUTY_J};
 
-    for (int i = 0; i < 10; i++)
-    {
-        ledcWrite(ledc_channel, duty_levels[i]); // Set PWM duty cycle
-        delay(3000);                             // Wait 3 seconds before next level
-    }
+    // for (int i = 0; i < 10; i++)
+    // {
+    //     ledcWrite(ledc_channel, duty_levels[i]); // Set PWM duty cycle
+    //     delay(3000);                             // Wait 3 seconds before next level
+    // }
 }

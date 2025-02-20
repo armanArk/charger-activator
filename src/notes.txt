@@ -1,0 +1,1 @@
+siapkan nilai resistor mendekati 1K3

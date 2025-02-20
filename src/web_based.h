@@ -29,11 +29,11 @@ const char *getValueKey(const char *input, const char *key); // utility function
 void printDecodeDataObc();
 
 // ----- Pin Definitions -----
-#define CAN_CS 5       // Chip Select pin for CAN
-#define CAN_INT 4      // Interrupt pin for CAN
-#define S2_CTRL_PIN 12 // S2 CONTROL
-#define CP_ADC_PIN 34  // CP after voltage divider
-#define CP_COMP_PIN 27 // measure the pulse width of CP signal
+#define CAN_CS 5  // Chip Select pin for CAN
+#define CAN_INT 4 // Interrupt pin for CAN
+
+// Function prototypes
+void handleSerialCommands();
 
 // ----- CAN Bus Setup -----
 MCP_CAN CAN(CAN_CS); // Create CAN instance
@@ -95,97 +95,6 @@ const float STATE_C_LOW = 0.7;   // Transisi ke state lain
 const float STATE_D_HIGH = 0.6;  // Tidak digunakan dalam DC fast charging
 const float STATE_D_LOW = 0.2;
 const float STATE_E_HIGH = 0.1; // < 0.1V
-
-// Enum untuk merepresentasikan status CP saat ini
-enum CPState
-{
-  STATE_A,
-  STATE_B,
-  STATE_B2, // Status B dengan PWM, transisi
-  STATE_C,
-  STATE_D, // Not used
-  STATE_E,
-  STATE_F
-};
-
-CPState currentState = STATE_A; // Status awal
-
-// ----- Fungsi untuk menangani CP/PP -----
-void handleCP()
-{
-  // 1. Baca Tegangan CP:
-  int adcValue = analogRead(CP_ADC_PIN);
-  float cpVoltage = (float)adcValue * (3.3 / 4095.0); // Konversi ke tegangan (asumsi referensi 3.3V)
-
-  Serial.print("CP Voltage: ");
-  Serial.println(cpVoltage);
-
-  // 2. Tentukan Status CP (dengan Histeresis):
-  switch (currentState)
-  {
-  case STATE_A:
-    if (cpVoltage < STATE_A_LOW)
-    {
-      currentState = STATE_B;
-      Serial.println("State B (Mated)");
-      delay(1000); // Debounce
-      // Simulate ready to charge.
-      digitalWrite(S2_CTRL_PIN, HIGH); // Simulate State C
-      currentState = STATE_C;
-      Serial.println("Signaling State C (Ready to Charge)");
-    }
-    break;
-
-  case STATE_B:
-    if (cpVoltage > STATE_A_HIGH)
-    {
-      currentState = STATE_A;
-      Serial.println("State A (Unmated)");
-    }
-    else if (cpVoltage < STATE_B_LOW)
-    {
-      // Here, you can check if it is C or D
-      if (cpVoltage > STATE_C_HIGH)
-      {
-        currentState = STATE_C;
-        Serial.println("State C (Ready to Charge)");
-      }
-      else if (cpVoltage > STATE_D_HIGH)
-      {
-        currentState = STATE_D;
-        Serial.println("State D");
-      }
-      else
-      {
-        currentState = STATE_E;
-        Serial.println("State E/A (Fault/Disconnected)");
-      }
-    }
-    break;
-  case STATE_C: // Only check for state out
-    if (cpVoltage > STATE_B_HIGH)
-    {
-      currentState = STATE_B;
-      Serial.println("State B (Mated)");
-      digitalWrite(S2_CTRL_PIN, LOW); // Ensure to change to correct state
-    }
-    else if (cpVoltage < STATE_C_LOW)
-    {
-      currentState = STATE_E;
-      Serial.println("State E/A (Fault/Disconnected)");
-      digitalWrite(S2_CTRL_PIN, LOW); // Ensure to change to correct state
-    }
-    break;
-  // Add other states here
-  default:
-    if (cpVoltage > STATE_A_HIGH)
-    {
-      currentState = STATE_A;
-      Serial.println("State A (Unmated)");
-    }
-    break;
-  }
-}
 
 // ----- Setup -----
 void setup()
@@ -255,7 +164,6 @@ void loop()
       // sendChargerCommand();
     }
   }
-
   handleReceivingCanbus(); // Check for incoming CAN messages
 
   // Cutoff logic (Corrected)

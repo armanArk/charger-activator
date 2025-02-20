@@ -18,7 +18,7 @@ void setup()
     SPI.begin(CAN_SCK, CAN_MISO, CAN_MOSI, CAN_CS);
 
     // Initialize MCP2515 running at 8MHz with 250kbps baudrate
-    while (CAN.begin(MCP_ANY, CAN_250KBPS, MCP_8MHZ) != CAN_OK)
+    while (CAN.begin(MCP_ANY, CAN_125KBPS, MCP_8MHZ) != CAN_OK)
     {
         Serial.println("CAN BUS initialization failed. Retrying...");
         delay(1000);
