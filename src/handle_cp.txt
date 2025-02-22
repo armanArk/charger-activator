@@ -1,14 +1,29 @@
 // Pindahkan fungsi ini ke bagian atas file, sebelum fungsi lainnya
 
-float getBatteryVoltage()
+float getMaxCurrentForObc()
 {
-    float _batteryVoltage = batteryVoltage;
-    if (_batteryVoltage <= 10)
+    if (batteryVoltage <= 0)
     {
-        _batteryVoltage = 400;
+        batteryVoltage = 401;
     }
-    return _batteryVoltage;
+    float maxCurrent = getMaxWattEvse(dutyCycle) / batteryVoltage;
+
+    if (maxCurrent > targetCurrent)
+    {
+        maxCurrent = targetCurrent;
+    }
+    return maxCurrent;
 }
+float getMaxWattEvse(float duty)
+{
+    float current = getMaxCurrent(duty);
+    if (current <= 0)
+    {
+        current = getMaxCurrentDummy();
+    }
+    return 220 * current;
+}
+
 float getMaxCurrent(float dutyCycle)
 {
     if (dutyCycle >= 50.0)
@@ -25,13 +40,11 @@ float getMaxCurrent(float dutyCycle)
         return 6.0;
     return 22; // Default if below 10% duty cycle
 }
-float getMaxCurrentForObc()
+float getMaxCurrentDummy()
 {
-    float maxCurrent = getMaxCurrent(dutyCycle);
-    float watt = maxCurrent * 220;
-    float _batteryVoltage = getBatteryVoltage();
-    return watt / _batteryVoltage;
+    return 22;
 }
+
 String getCPStatus(float voltage)
 {
     if (voltage >= 11.0)
@@ -44,7 +57,6 @@ String getCPStatus(float voltage)
         return "D"; // With ventilation
     if (voltage >= -1.0 && voltage <= 1.0)
         return "E"; // No power (shut off)
-
     return "E";
 }
 // Convert ADC voltage to real CP voltage
@@ -174,19 +186,51 @@ void handleSerialCommands()
 {
     if (Serial.available() > 0)
     {
-        char cmd = Serial.read();
-        switch (cmd)
+        String command = Serial.readStringUntil('\n');
+        command.trim(); // Hilangkan spasi di awal/akhir
+
+        // Periksa apakah perintah diawali dengan "SIM "
+        if (command.startsWith("SIM "))
         {
-        case 'c':
-            digitalWrite(S2_CTRL_PIN, HIGH);
-            Serial.println(F("Control: HIGH"));
-            break;
-        case 'b':
-            digitalWrite(S2_CTRL_PIN, LOW);
-            Serial.println(F("Control: LOW"));
-            break;
-        default:
-            break;
+            // Misalnya, perintah: "SIM 400 8"
+            int firstSpace = command.indexOf(' ');
+            int secondSpace = command.indexOf(' ', firstSpace + 1);
+            if (firstSpace != -1 && secondSpace != -1)
+            {
+                String voltageStr = command.substring(firstSpace + 1, secondSpace);
+                String currentStr = command.substring(secondSpace + 1);
+                float simBatteryVoltage = voltageStr.toFloat();
+                float simBatteryCurrent = currentStr.toFloat();
+
+                // Panggil fungsi simulasi utama dengan nilai yang di-set
+                simulateMain(simBatteryVoltage, simBatteryCurrent);
+            }
+            else
+            {
+                Serial.println("Perintah simulasi tidak valid. Gunakan format: SIM <batteryVoltage> <batteryCurrent>");
+            }
+        }
+        else
+        {
+            // Proses perintah serial lainnya
+            char cmd = command.charAt(0);
+            switch (cmd)
+            {
+            case 'c':
+                digitalWrite(S2_CTRL_PIN, HIGH);
+                Serial.println("Control: HIGH");
+                break;
+            case 'b':
+                digitalWrite(S2_CTRL_PIN, LOW);
+                Serial.println("Control: LOW");
+                break;
+            case 'a':
+                currentCpState = "B";
+                break;
+            default:
+                Serial.println("Perintah tidak dikenali.");
+                break;
+            }
         }
     }
 }

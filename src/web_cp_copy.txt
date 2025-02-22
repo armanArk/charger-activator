@@ -57,10 +57,10 @@ const uint8_t FREQUENCY_PIN = 34; // PWM input pin
 const uint8_t S2_CTRL_PIN = 12;   // Control pin
 
 // Constants
-const float VREF = 3.3;                     // ADC Reference voltage
-const float CP_SCALING_FACTOR = 6.16 / 1.8; // CALIBRASI NILAI ADC  (voltage CP / ADC)
-const unsigned long UPDATE_INTERVAL = 2000; // Frequency update interval (ms)
-const unsigned long PEAK_INTERVAL = 2000;   // Peak voltage update interval (ms)
+const float VREF = 3.3;                      // ADC Reference voltage
+const float CP_SCALING_FACTOR = 6.16 / 1.85; // CALIBRASI NILAI ADC  (voltage CP / ADC)
+const unsigned long UPDATE_INTERVAL = 2000;  // Frequency update interval (ms)
+const unsigned long PEAK_INTERVAL = 2000;    // Peak voltage update interval (ms)
 
 // Global variables
 volatile unsigned long pulseCount = 0;
@@ -86,8 +86,10 @@ float getMaxCurrent(float dutyCycle);
 String getCPStatus(float voltage);
 void vehicleReadyStateClear();
 float getMaxCurrentForObc();
-float getBatteryVoltage();
-// Variables for CAN simulation and web display
+float getMaxWattEvse(float duty);
+float getMaxCurrent(float dutyCycle);
+float getMaxCurrentDummy();
+
 float cpVoltage = 0.0f; // CP S2 voltage measurement
 
 // ----- Function Prototypes -----
@@ -99,7 +101,9 @@ void sendChargerCommand(float voltage, float current, bool startCharging);
 void stopCharger();
 void startCharger();
 void handleReceivingCanbus();
+void simulateMain(float simBatteryVoltage, float simBatteryCurrent);
 void simulateCanbus(float _batteryVoltage, float _batteryCurrent, bool _state);
+void simulateCanbus2(float _batteryVoltage, float _batteryCurrent, bool _state);
 void serialLoop();
 void decodeChargerBroadcast(byte msgData[], byte len);
 bool keyExists(const char *input, const char *key);          // utility function
@@ -118,6 +122,7 @@ bool startState = false;
 bool communicationTimeout = false;
 bool isActiveOnStartup = false;
 bool cpModeEnabled = false; // Track CP mode state
+String currentCpState;
 
 #include "handle_canbus.h"
 #include "handle_web.h"
@@ -128,19 +133,21 @@ void webServerTask(void *pvParameters);
 void serialTask(void *pvParameters);
 void canReceiveTask(void *pvParameters);
 void periodicTask(void *pvParameters);
-
+bool stateReady;
 void vehicleReady()
 {
     digitalWrite(S2_CTRL_PIN, HIGH);
     Serial.println("vehicleReady");
+    stateReady = true;
 }
 
 void vehicleReadyStateClear()
 {
     if (!vehicleReadyStateCleared)
     {
-        if (!getCPStatus(convertAdcToCpVoltage(peakVoltage)) == 'B')
+        if (!currentCpState == 'B')
         {
+            stateReady = false;
             // Execute the state clear logic only once
             lastCpState = "A";
             vehicleReadyState = false;
@@ -183,17 +190,15 @@ void periodicTask(void *pvParameters)
         {
             lastTime = currentTime;
             uptime = millis() / 1000;
-            Serial.print("STATE:");
-            Serial.print(getCPStatus(convertAdcToCpVoltage(peakVoltage)));
-            Serial.print(",cpMode:");
-            Serial.println(cpModeEnabled);
 
             // CP Mode Logic
             if (cpModeEnabled)
             {
-                float maxAllowedCurrent = getMaxCurrent(dutyCycle);
+                // float maxAllowedCurrent = getMaxCurrent(dutyCycle);
+                float maxAllowedCurrent = getMaxCurrentDummy();
                 float adjustedCurrent = min(targetCurrent, maxAllowedCurrent);
                 sendChargerCommand(targetVoltage, adjustedCurrent, true);
+                currentCpState = getCPStatus(convertAdcToCpVoltage(peakVoltage));
 
                 // Reset to state A if peakVoltage, frequency, and dutyCycle are zero
                 // detect reset A only frequency == 0 && dutyCycle == 0!
@@ -202,11 +207,20 @@ void periodicTask(void *pvParameters)
                     vehicleReadyStateClear();
                     // sendChargerCommand(targetVoltage, 0, false);
                     // Serial.println("Reset to state A due to zero peakVoltage, frequency, and dutyCycle");
-                    continue; // Skip the rest of the loop iteration
+                    // continue; // Skip the rest of the loop iteration
                 }
-                String currentCpState = getCPStatus(convertAdcToCpVoltage(peakVoltage));
+
+                // OUTLINE THIS
                 if (true) // if (!communicationTimeout)
                 {
+                    Serial.print("STATE:");
+                    Serial.print(currentCpState);
+                    Serial.print(",cpMode:");
+                    Serial.print(cpModeEnabled);
+                    Serial.print(",stateReady:");
+                    Serial.print(stateReady);
+                    Serial.print(",vehicleReadyState:");
+                    Serial.println(vehicleReadyState);
                     // State changes to B (Vehicle Connected)
                     if (currentCpState == "B" && !vehicleReadyState)
                     {
@@ -214,11 +228,12 @@ void periodicTask(void *pvParameters)
                         vehicleReadyState = true;
                         vehicleReadyStateCleared = false;
                         Serial.println("Vehicle connected - State B");
+                        Serial.println("====================== triggered ==================");
                     }
                     // State changes to C (Vehicle Ready for Charging)
                     else if (currentCpState == "C")
                     {
-                        float maxAllowedCurrent = getMaxCurrentForObc();
+                        float maxAllowedCurrent = getMaxCurrent(dutyCycle);
                         float adjustedCurrent = min(targetCurrent, maxAllowedCurrent);
                         // sendChargerCommand(targetVoltage, adjustedCurrent, true);
                         if (!hasStartedCharging)

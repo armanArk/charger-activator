@@ -191,9 +191,12 @@ void handleRoot()
   html += "<li><strong>Duty Cycle:</strong> <span id='cp-duty-cycle'>" + String(dutyCycle, 1) + "</span> %</li>";
   html += "<li><strong>CP volt:</strong> <span id='cp-duty-cycle'>" + String(convertAdcToCpVoltage(peakVoltage)) + "</span> V</li>";
   html += "<li><strong>EVSE State:</strong> <span id='cp-duty-cycle'>" + getCPStatus(convertAdcToCpVoltage(peakVoltage)) + "</span> V</li>";
-  html += "<li><strong>max pwm current:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrent(dutyCycle)) + "</span> A</li>";
-  html += "<li><strong>max current obc:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrentForObc()) + "</span> A</li>";
-  html += "<li><strong>max current evse:</strong> <span id='cp-duty-cycle'>" + String(getMaxWattEvse(dutyCycle)) + "</span> A</li>";
+  html += "<li><strong>max evse 220 current:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrent(dutyCycle)) + "</span> A</li>";
+  html += "<li><strong>max current battery obc:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrentForObc()) + "</span> A</li>";
+  html += "<li><strong>watt obc continue:</strong> <span id='cp-duty-cycle'>" + String(getBatteryVoltage() * batteryCurrent) + "</span> W</li>";
+  html += "<li><strong>max watt evse:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrent(dutyCycle) * 220) + "</span> W</li>";
+
+  // html += "<li><strong>max current evse:</strong> <span id='cp-duty-cycle'>" + String(getMaxWattEvse(dutyCycle)) + "</span> A</li>";
   html += "</ul>";
   html += "</div>";
 

@@ -1,1 +1,3 @@
 siapkan nilai resistor mendekati 1K3
+HARUS KE STATE B DAHULU
+DUTY AND FREQ JANGAN 0
