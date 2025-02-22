@@ -1,3 +1,28 @@
+// Pindahkan fungsi ini ke bagian atas file, sebelum fungsi lainnya
+
+float getMaxCurrentForObc()
+{
+    if (batteryVoltage <= 0)
+    {
+        batteryVoltage = 401;
+    }
+    float maxCurrent = getMaxWattEvse(dutyCycle) / batteryVoltage;
+
+    if (maxCurrent > targetCurrent)
+    {
+        maxCurrent = targetCurrent;
+    }
+    return maxCurrent;
+}
+float getMaxWattEvse(float duty)
+{
+    float current = getMaxCurrent(duty);
+    if (current <= 0)
+    {
+        current = getMaxCurrentDummy();
+    }
+    return 220 * current;
+}
 
 float getMaxCurrent(float dutyCycle)
 {
@@ -13,9 +38,13 @@ float getMaxCurrent(float dutyCycle)
         return 9.6;
     if (dutyCycle >= 10.0)
         return 6.0;
-
-    return 0.0; // Default if below 10% duty cycle
+    return 22; // Default if below 10% duty cycle
 }
+float getMaxCurrentDummy()
+{
+    return 22;
+}
+
 String getCPStatus(float voltage)
 {
     if (voltage >= 11.0)
@@ -28,7 +57,6 @@ String getCPStatus(float voltage)
         return "D"; // With ventilation
     if (voltage >= -1.0 && voltage <= 1.0)
         return "E"; // No power (shut off)
-
     return "E";
 }
 // Convert ADC voltage to real CP voltage
@@ -64,9 +92,23 @@ void IRAM_ATTR handleInterrupt()
 }
 
 // Initialize hardware
+void resetCP()
+{
+    // Reset all CP-related variables
+    pulseCount = 0;
+    highTime = 0;
+    lowTime = 0;
+    frequency = 0;
+    dutyCycle = 0;
+    currentPeak = 0.01;
+    peakVoltage = 0.01;
+
+    // Reset physical pin
+    digitalWrite(S2_CTRL_PIN, LOW);
+}
+
 void initializeCP()
 {
-
     pinMode(ADC_PIN, INPUT);
     analogSetAttenuation(ADC_11db);
     analogReadResolution(12);
@@ -79,6 +121,8 @@ void initializeCP()
 
     lastFrequencyUpdate = millis();
     lastPeakReset = millis();
+
+    resetCP(); // Reset CP state on initialization
 }
 
 // Update and reset peak voltage
@@ -99,10 +143,10 @@ float updatePeakVoltage()
         lastPeakReset = currentTime;
 
         Serial.print(F("Peak Analog Voltage: "));
-        Serial.print(peakVoltage, 2);
-        Serial.print(F("V | Converted CP Voltage: "));
-        Serial.print(convertAdcToCpVoltage(peakVoltage), 2);
-        Serial.println(F("V"));
+        Serial.println(peakVoltage, 2);
+        // Serial.print(F("V | Converted CP Voltage: "));
+        // Serial.print(convertAdcToCpVoltage(peakVoltage), 2);
+        // Serial.println(F("V"));
     }
 
     return peakVoltage;

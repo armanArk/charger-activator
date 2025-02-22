@@ -46,16 +46,19 @@ bool cutoffTriggered = false;              // Flag to indicate that cutoff has o
 const unsigned long delayCutoff = 30000;   // 30 seconds delay for cutoff
 unsigned long uptime = 0;                  // System uptime (seconds)
 bool chargingObcState = false;             // OBC charging state
-bool modeCp;
+bool vehicleReadyState = false;
+bool vehicleReadyStateCleared = false; // Track if it has been cleared
+bool hasStartedCharging = false;
+String lastCpState = "A";
 
 // Pin Definitions
-const uint8_t ADC_PIN = 35;       // ADC input pin
+const uint8_t ADC_PIN = 33;       // ADC input pin
 const uint8_t FREQUENCY_PIN = 34; // PWM input pin
 const uint8_t S2_CTRL_PIN = 12;   // Control pin
 
 // Constants
 const float VREF = 3.3;                     // ADC Reference voltage
-const float CP_SCALING_FACTOR = 6.16 / 2.0; // CP voltage mapping
+const float CP_SCALING_FACTOR = 6.16 / 1.6; // CALIBRASI NILAI ADC  (voltage CP / ADC)
 const unsigned long UPDATE_INTERVAL = 2000; // Frequency update interval (ms)
 const unsigned long PEAK_INTERVAL = 2000;   // Peak voltage update interval (ms)
 
@@ -81,8 +84,12 @@ void updateFrequencyAndDutyCycle();
 void handleSerialCommands();
 float getMaxCurrent(float dutyCycle);
 String getCPStatus(float voltage);
+void vehicleReadyStateClear();
+float getMaxCurrentForObc();
+float getMaxWattEvse(float duty);
+float getMaxCurrent(float dutyCycle);
+float getMaxCurrentDummy();
 
-// Variables for CAN simulation and web display
 float cpVoltage = 0.0f; // CP S2 voltage measurement
 
 // ----- Function Prototypes -----
@@ -90,8 +97,7 @@ void handleRoot();
 void handleSet();
 void handleControl();
 void handleData();
-void sendChargerCommand();
-void stopChargerCommand();
+void sendChargerCommand(float voltage, float current, bool startCharging);
 void stopCharger();
 void startCharger();
 void handleReceivingCanbus();
@@ -125,6 +131,29 @@ void serialTask(void *pvParameters);
 void canReceiveTask(void *pvParameters);
 void periodicTask(void *pvParameters);
 
+void vehicleReady()
+{
+    digitalWrite(S2_CTRL_PIN, HIGH);
+    Serial.println("vehicleReady");
+}
+
+void vehicleReadyStateClear()
+{
+    if (!vehicleReadyStateCleared)
+    {
+        if (!getCPStatus(convertAdcToCpVoltage(peakVoltage)) == 'B')
+        {
+            // Execute the state clear logic only once
+            lastCpState = "A";
+            vehicleReadyState = false;
+            hasStartedCharging = false;
+            digitalWrite(S2_CTRL_PIN, LOW);
+            Serial.println("vehicleReadyStateClear()");
+            vehicleReadyStateCleared = true;
+        }
+    }
+}
+
 void startCharger()
 {
     chargerActive = true;
@@ -147,6 +176,7 @@ void stopCharger()
 void periodicTask(void *pvParameters)
 {
     unsigned long lastTime = millis();
+
     for (;;)
     {
         unsigned long currentTime = millis();
@@ -155,57 +185,116 @@ void periodicTask(void *pvParameters)
         {
             lastTime = currentTime;
             uptime = millis() / 1000;
-            if (chargerActive)
-            {
-                sendChargerCommand();
-            }
+            Serial.print("STATE:");
+            Serial.print(getCPStatus(convertAdcToCpVoltage(peakVoltage)));
+            Serial.print(",cpMode:");
+            Serial.println(cpModeEnabled);
 
-            // --- Cutoff Logic ---
-            if (chargerActive && !cutoffTriggered)
+            // CP Mode Logic
+            if (cpModeEnabled)
             {
-                // Uncomment and adjust as needed
-                /*
-                if (batteryCurrent < cutoffCurrent)
+                // float maxAllowedCurrent = getMaxCurrent(dutyCycle);
+                float maxAllowedCurrent = getMaxCurrentDummy();
+                float adjustedCurrent = min(targetCurrent, maxAllowedCurrent);
+                sendChargerCommand(targetVoltage, adjustedCurrent, true);
+
+                // Reset to state A if peakVoltage, frequency, and dutyCycle are zero
+                // detect reset A only frequency == 0 && dutyCycle == 0!
+                if (frequency == 0 && dutyCycle == 0)
                 {
-                    if (!checkingCutoff)
+                    vehicleReadyStateClear();
+                    // sendChargerCommand(targetVoltage, 0, false);
+                    // Serial.println("Reset to state A due to zero peakVoltage, frequency, and dutyCycle");
+                    continue; // Skip the rest of the loop iteration
+                }
+                String currentCpState = getCPStatus(convertAdcToCpVoltage(peakVoltage));
+                if (true) // if (!communicationTimeout)
+                {
+                    // State changes to B (Vehicle Connected)
+                    if (currentCpState == "B" && !vehicleReadyState)
                     {
-                        cutoffStartTime = millis();
-                        checkingCutoff = true;
-                        Serial.println("Start monitoring low current...");
+                        vehicleReady();
+                        vehicleReadyState = true;
+                        vehicleReadyStateCleared = false;
+                        Serial.println("Vehicle connected - State B");
                     }
-                    else if ((millis() - cutoffStartTime) >= delayCutoff)
+                    // State changes to C (Vehicle Ready for Charging)
+                    else if (currentCpState == "C")
                     {
-                        stopCharger();
-                        cutoffTriggered = true;
-                        chargingStatusText = "Cutoff current";
-                        Serial.println("=====================================");
-                        Serial.println("Cutoff Triggered!");
-                        Serial.print("Battery Voltage: ");
-                        Serial.print(batteryVoltage);
-                        Serial.println(" V");
-                        Serial.print("Battery Current: ");
-                        Serial.print(batteryCurrent);
-                        Serial.println(" A");
-                        Serial.print("Cutoff Current Threshold: ");
-                        Serial.print(cutoffCurrent);
-                        Serial.println(" A");
-                        Serial.println("=====================================");
+                        float maxAllowedCurrent = getMaxCurrent(dutyCycle);
+                        float adjustedCurrent = min(targetCurrent, maxAllowedCurrent);
+                        // sendChargerCommand(targetVoltage, adjustedCurrent, true);
+                        if (!hasStartedCharging)
+                        {
+                            hasStartedCharging = true;
+                            Serial.println("Vehicle ready to charge - State C");
+                            Serial.printf("Max allowed current: %.2f A\n", maxAllowedCurrent);
+                        }
                     }
                 }
                 else
                 {
-                    if (checkingCutoff)
+                    // Jika komunikasi timeout
+                    if (hasStartedCharging)
                     {
-                        checkingCutoff = false;
-                        Serial.println("Current recovered, reset monitoring");
+                        vehicleReadyStateClear();
+                        // sendChargerCommand(targetVoltage, 0, false);
+                        Serial.println("Charging stopped due to communication timeout");
                     }
                 }
-                */
+
+                // State A atau E (Disconnected atau Error)
+                if ((currentCpState == "A" || currentCpState == "E") &&
+                    lastCpState != "A" && lastCpState != "E")
+                {
+                    vehicleReadyStateClear();
+                    sendChargerCommand(targetVoltage, 0, false);
+                    Serial.println("Vehicle disconnected or error - State " + currentCpState);
+                }
+
+                lastCpState = currentCpState;
             }
-            else
+            // Non-CP Mode Logic
+            else if (chargerActive)
             {
-                checkingCutoff = false;
+                if (!communicationTimeout)
+                {
+                    // Kirim perintah charger setiap detik saat mode normal
+                    sendChargerCommand(targetVoltage, targetCurrent, true);
+                }
+                else
+                {
+                    stopCharger();
+                    Serial.println("Charging stopped due to communication timeout");
+                }
             }
+
+            // Cutoff Logic (hanya untuk non-CP mode)
+            // if (!cpModeEnabled && chargerActive && !cutoffTriggered && !communicationTimeout)
+            // {
+            //     if (batteryCurrent <= cutoffCurrent)
+            //     {
+            //         if (!checkingCutoff)
+            //         {
+            //             checkingCutoff = true;
+            //             cutoffStartTime = millis();
+            //         }
+            //         else if (millis() - cutoffStartTime >= delayCutoff)
+            //         {
+            //             cutoffTriggered = true;
+            //             stopCharger();
+            //             Serial.println("Charging stopped due to current cutoff");
+            //         }
+            //     }
+            //     else
+            //     {
+            //         checkingCutoff = false;
+            //     }
+            // }
+            // else
+            // {
+            //     checkingCutoff = false;
+            // }
         }
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
@@ -260,11 +349,7 @@ void setup()
     server.on("/data", handleData);
     server.begin();
 
-    // Activate charging on startup if enabled
-    if (isActiveOnStartup)
-    {
-        startCharger();
-    }
+    startCharger();
 
     // Create RTOS tasks
     xTaskCreatePinnedToCore(
@@ -309,7 +394,6 @@ void setup()
 void loop()
 {
     // The main loop is empty because FreeRTOS tasks handle everything
-    vTaskDelay(1 / portTICK_PERIOD_MS);
     handleSerialCommands();
     updatePeakVoltage();
     updateFrequencyAndDutyCycle();

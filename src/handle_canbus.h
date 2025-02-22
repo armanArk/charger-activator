@@ -1,6 +1,13 @@
+// Tambahkan deklarasi di awal file, setelah includes
+
 // --- CAN Bus Functions ---
-void sendChargerCommand(float voltage, float current, bool startCharging = true)
+void sendChargerCommand(float voltage, float current, bool startCharging)
 {
+    Serial.print("Sent CAN command. Target Voltage: ");
+    Serial.print(voltage);
+    Serial.print("V, Target Current: ");
+    Serial.print(current);
+    Serial.println("A");
     // Use provided parameters or fall back to global variables
     float commandVoltage = voltage > 0 ? voltage : targetVoltage;
     float commandCurrent = current > 0 ? current : targetCurrent;
@@ -30,41 +37,7 @@ void sendChargerCommand(float voltage, float current, bool startCharging = true)
     byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
     if (sndStat == CAN_OK)
     {
-        Serial.print("Sent CAN command. Target Voltage: ");
-        Serial.print(commandVoltage);
-        Serial.print("V, Target Current: ");
-        Serial.print(commandCurrent);
-        Serial.println("A");
-    }
-    else
-    {
-        Serial.println("Error sending CAN command");
-    }
-}
-void sendChargerCommand()
-{
-    // Create CAN message to control the charger (Report 1)
-    byte data[8] = {0};
-    uint16_t voltageVal = targetVoltage * 10; // Scale voltage (0.1V per bit)
-    data[0] = highByte(voltageVal);           // High byte of voltage
-    data[1] = lowByte(voltageVal);            // Low byte of voltage
-    uint16_t currentVal = targetCurrent * 10; // Scale current (0.1A per bit)
-    data[2] = highByte(currentVal);           // High byte of current
-    data[3] = lowByte(currentVal);            // Low byte of current
-    data[4] = 0x00;                           // Control byte:  0x00 = start charging, 0x01 = stop
-    data[5] = 0x00;                           // Byte 5-7: Reserved (data[5] reserved for heating contactor)
-    data[6] = 0x00;
-    data[7] = 0x00;
-
-    // Send CAN message
-    byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
-    if (sndStat == CAN_OK)
-    {
-        Serial.print("Sent CAN command. Target Voltage: ");
-        Serial.print(targetVoltage);
-        Serial.print("V, Target Current: ");
-        Serial.print(targetCurrent);
-        Serial.println("A");
+        Serial.print("Sent CAN command. OK");
     }
     else
     {
@@ -91,6 +64,10 @@ void stopChargerCommand()
     }
 }
 
+// Tambahkan variabel global untuk melacak waktu
+unsigned long lastCanReceiveTime = 0;
+const unsigned long timeoutReceived = 15000; // Contoh: 5000 ms (5 detik)
+
 // Function to process received CAN messages
 void handleReceivingCanbus()
 {
@@ -102,6 +79,9 @@ void handleReceivingCanbus()
 
         if (CAN.readMsgBuf(&id, &len, msgData) == CAN_OK)
         {
+            // Update waktu terakhir pesan CAN diterima
+            lastCanReceiveTime = millis();
+
             // Update CAN display data
             webCANId = "0x" + String(id, HEX);
             webCANData = "";
@@ -123,6 +103,20 @@ void handleReceivingCanbus()
                 decodeChargerBroadcast(msgData, len);
             }
         }
+    }
+
+    // Check for timeout
+    if (millis() - lastCanReceiveTime > timeoutReceived)
+    {
+        communicationTimeout = true;
+        if (cpModeEnabled)
+        {
+            vehicleReadyStateClear();
+        }
+    }
+    else
+    {
+        communicationTimeout = false;
     }
 }
 

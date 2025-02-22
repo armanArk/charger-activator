@@ -1,13 +1,13 @@
 #include <Arduino.h>
 
 // Pin Definitions
-const uint8_t ADC_PIN = 35;       // ADC input pin
+const uint8_t ADC_PIN = 33;       // ADC input pin
 const uint8_t FREQUENCY_PIN = 34; // PWM input pin
 const uint8_t S2_CTRL_PIN = 12;   // Control pin
 
 // Constants
 const float VREF = 3.3;                     // ADC Reference voltage
-const float CP_SCALING_FACTOR = 6.16 / 2.0; // CP voltage mapping
+const float CP_SCALING_FACTOR = 6.16 / 1.6; // CP voltage mapping
 const unsigned long UPDATE_INTERVAL = 1000; // Frequency update interval (ms)
 const unsigned long PEAK_INTERVAL = 200;    // Peak voltage update interval (ms)
 

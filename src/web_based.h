@@ -50,7 +50,7 @@ WebServer server(80);
 const float CELL_VOLTAGE = 3.5;                             // Maximum per-cell voltage
 const int NUM_CELLS = 120;                                  // Example: 32S configuration.  CHANGE THIS!
 const float MAX_ALLOWED_VOLTAGE = NUM_CELLS * CELL_VOLTAGE; // Calculated maximum allowed voltage
-const float MAX_ALLOWED_CURRENT = 16;                       // Maximum allowed current.  CHANGE THIS!
+const float MAX_ALLOWED_CURRENT = 60;                       // Maximum allowed current.  CHANGE THIS!
 #define CHARGER_CONTROL_ID 0x1806E5F4                       // CAN ID for sending commands TO the charger (Report 1)
 #define BMS_CONTROL_ID 0x1806E5F4                           // CAN ID for receive command from bms
 
