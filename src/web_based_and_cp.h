@@ -58,7 +58,7 @@ const uint8_t S2_CTRL_PIN = 12;   // Control pin
 
 // Constants
 const float VREF = 3.3;                     // ADC Reference voltage
-const float CP_SCALING_FACTOR = 6.16 / 1.8; // CALIBRASI NILAI ADC  (voltage CP / ADC)
+const float CP_SCALING_FACTOR = 6 / 2.3;    // CALIBRASI NILAI ADC  (voltage CP / ADC)
 const unsigned long UPDATE_INTERVAL = 2000; // Frequency update interval (ms)
 const unsigned long PEAK_INTERVAL = 2000;   // Peak voltage update interval (ms)
 
@@ -179,10 +179,10 @@ void periodicTask(void *pvParameters)
     {
         unsigned long currentTime = millis();
         // Execute tasks every 1000 ms
-        if (currentTime - lastTime >= 1000)
+        if (currentTime - lastTime >= 4000)
         {
             lastTime = currentTime;
-            uptime = millis() / 1000;
+            uptime = millis() / 4000;
             Serial.print("STATE:");
             Serial.print(getCPStatus(convertAdcToCpVoltage(peakVoltage)));
             Serial.print(",cpMode:");
@@ -192,7 +192,12 @@ void periodicTask(void *pvParameters)
             if (cpModeEnabled)
             {
                 float maxAllowedCurrent = getMaxCurrent(dutyCycle);
-                float adjustedCurrent = min(targetCurrent, maxAllowedCurrent);
+                float adjustedCurrent = targetCurrent;
+                if (adjustedCurrent > getMaxCurrentForObc())
+                {
+                    adjustedCurrent = getMaxCurrentForObc();
+                }
+                // Serial.print("Adjusted Current: ");
                 sendChargerCommand(targetVoltage, adjustedCurrent, true);
 
                 // Reset to state A if peakVoltage, frequency, and dutyCycle are zero
@@ -203,6 +208,10 @@ void periodicTask(void *pvParameters)
                     // sendChargerCommand(targetVoltage, 0, false);
                     // Serial.println("Reset to state A due to zero peakVoltage, frequency, and dutyCycle");
                     continue; // Skip the rest of the loop iteration
+                }
+                else
+                {
+                    vehicleReady();
                 }
                 String currentCpState = getCPStatus(convertAdcToCpVoltage(peakVoltage));
                 if (true) // if (!communicationTimeout)
@@ -244,8 +253,8 @@ void periodicTask(void *pvParameters)
                 if ((currentCpState == "A" || currentCpState == "E") &&
                     lastCpState != "A" && lastCpState != "E")
                 {
-                    vehicleReadyStateClear();
-                    sendChargerCommand(targetVoltage, 0, false);
+                    // vehicleReadyStateClear();
+                    // sendChargerCommand(targetVoltage, 0, false);
                     Serial.println("Vehicle disconnected or error - State " + currentCpState);
                 }
 

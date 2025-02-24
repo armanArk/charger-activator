@@ -11,20 +11,17 @@ float getBatteryVoltage()
 }
 float getMaxCurrent(float dutyCycle)
 {
-    if (dutyCycle >= 50.0)
-        return 36.0;
-    if (dutyCycle >= 40.0)
-        return 30.0;
-    if (dutyCycle >= 30.0)
-        return 22.0;
-    if (dutyCycle >= 25.0)
-        return 20.0;
-    if (dutyCycle >= 16.0)
-        return 9.6;
-    if (dutyCycle >= 10.0)
-        return 6.0;
-    return 22; // Default if below 10% duty cycle
+    float correction = 1; // Adjust this value as needed
+    if (dutyCycle >= 10.0 && dutyCycle <= 85.0)
+    {
+        if (dutyCycle <= 64.0) // First formula (up to 38.4A)
+            return (dutyCycle * 0.6) - correction;
+        else // Adjusted second formula to ensure continuity
+            return (38.4 + (dutyCycle - 64.0) * 2.5) - correction;
+    }
+    return 22; // Default case
 }
+
 float getMaxCurrentForObc()
 {
     float maxCurrent = getMaxCurrent(dutyCycle);
@@ -34,13 +31,13 @@ float getMaxCurrentForObc()
 }
 String getCPStatus(float voltage)
 {
-    if (voltage >= 11.0)
+    if (voltage >= 11.1)
         return "A"; // Standby
-    if (voltage >= 8.0 && voltage <= 10.0)
+    if (voltage >= 7.6 && voltage <= 11.0)
         return "B"; // Vehicle detected
-    if (voltage >= 5.0 && voltage <= 7.0)
+    if (voltage >= 5.5 && voltage <= 7.5)
         return "C"; // Ready (charging)
-    if (voltage >= 2.0 && voltage <= 4.0)
+    if (voltage >= 2.0 && voltage <= 5.4)
         return "D"; // With ventilation
     if (voltage >= -1.0 && voltage <= 1.0)
         return "E"; // No power (shut off)

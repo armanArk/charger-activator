@@ -37,7 +37,7 @@ void sendChargerCommand(float voltage, float current, bool startCharging)
     byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
     if (sndStat == CAN_OK)
     {
-        Serial.print("Sent CAN command. OK");
+        Serial.println("Sent CAN command. OK, current: " + String(commandCurrent), +", voltage:" + String(batteryVoltage));
     }
     else
     {
@@ -47,6 +47,7 @@ void sendChargerCommand(float voltage, float current, bool startCharging)
 
 void stopChargerCommand()
 {
+    return;
     byte data[8] = {0};
     data[4] = 0x01; // Control byte: 0x01 = stop charging
                     // Send CAN message
@@ -71,6 +72,7 @@ const unsigned long timeoutReceived = 15000; // Contoh: 5000 ms (5 detik)
 // Function to process received CAN messages
 void handleReceivingCanbus()
 {
+    return;
     if (digitalRead(CAN_INT) == LOW)
     { // Check for CAN interrupt
         unsigned long id;
