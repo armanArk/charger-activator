@@ -11,13 +11,13 @@ float getBatteryVoltage()
 }
 float getMaxCurrent(float dutyCycle)
 {
-    float correction = 1; // Adjust this value as needed
+    float correction = -0.1; // Adjust this value as needed
     if (dutyCycle >= 10.0 && dutyCycle <= 85.0)
     {
         if (dutyCycle <= 64.0) // First formula (up to 38.4A)
-            return (dutyCycle * 0.6) - correction;
+            return (dutyCycle * 0.6) + correction;
         else // Adjusted second formula to ensure continuity
-            return (38.4 + (dutyCycle - 64.0) * 2.5) - correction;
+            return (38.4 + (dutyCycle - 64.0) * 2.5) + correction;
     }
     return 22; // Default case
 }
@@ -127,13 +127,53 @@ float updatePeakVoltage()
         currentPeak = 0.01; // Avoid zero reset issues
         lastPeakReset = currentTime;
 
-        Serial.print(F("Peak Analog Voltage: "));
-        Serial.println(peakVoltage, 2);
+        // Serial.print(F("Peak Analog Voltage: "));
+        // Serial.println(peakVoltage, 2);
         // Serial.print(F("V | Converted CP Voltage: "));
         // Serial.print(convertAdcToCpVoltage(peakVoltage), 2);
         // Serial.println(F("V"));
     }
 
+    return peakVoltage;
+}
+// Modified function: Calculate average voltage only when pulse is HIGH
+float updateAverageVoltage()
+{
+    static float voltageSum = 0.0;
+    static unsigned long sampleCount = 0;
+
+    // Baca nilai ADC
+    float voltage = readVoltage();
+    // Akumulasi hanya jika kondisi pulse HIGH
+    if (digitalRead(FREQUENCY_PIN) == HIGH)
+    {
+        voltageSum += voltage;
+        sampleCount++;
+    }
+
+    unsigned long currentTime = millis();
+    if (currentTime - lastPeakReset >= PEAK_INTERVAL)
+    {
+        // Hitung nilai rata-rata
+        float averageVoltage = (sampleCount > 0) ? (voltageSum / sampleCount) : 0.0;
+        // Simpan hasil rata-rata ke variabel global (digunakan pada fungsi lain jika diperlukan)
+        peakVoltage = averageVoltage;
+
+        // Reset nilai untuk periode selanjutnya
+        voltageSum = 0.0;
+        lastPeakReset = currentTime;
+
+        Serial.print(F("sampleCount:"));
+        Serial.print(String(sampleCount));
+        sampleCount = 0;
+        Serial.print(F(" | Average "));
+        Serial.print(PEAK_INTERVAL);
+        Serial.print(F(" ms: "));
+        Serial.print(averageVoltage, 2);
+        Serial.print(F(" V | Converted CP Voltage: "));
+        Serial.print(convertAdcToCpVoltage(averageVoltage), 2);
+        Serial.println(F(" V"));
+    }
     return peakVoltage;
 }
 
@@ -153,16 +193,23 @@ void updateFrequencyAndDutyCycle()
         {
             dutyCycle = 0;
         }
-
         pulseCount = 0;
         highTime = lowTime = 0;
         lastFrequencyUpdate = currentTime;
-
-        Serial.print(F("Frequency: "));
+        Serial.print(F("freq: "));
         Serial.print(frequency);
-        Serial.print(F(" Hz, Duty Cycle: "));
+        Serial.print(F(" Hz | Duty: "));
         Serial.print(dutyCycle, 1);
-        Serial.println(F("%"));
+        Serial.print(F("%"));
+        Serial.print(" | Peak: ");
+        Serial.print(String(peakVoltage, 2));
+        Serial.print("V | CP_V: ");
+        Serial.print(convertAdcToCpVoltage(peakVoltage), 1);
+        Serial.print("V | State: ");
+        Serial.print(getCPStatus(cpVoltage));
+        Serial.print(" | Max CC: ");
+        Serial.print(getMaxCurrent(dutyCycle));
+        Serial.println("A");
     }
 }
 

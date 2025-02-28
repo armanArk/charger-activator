@@ -1,8 +1,8 @@
 /*
   IMPORTANT:
-  Pastikan rating maksimum charger/battery sesuai dengan spesifikasi Anda.
   Kesalahan input pada MAX_ALLOWED_VOLTAGE / MAX_ALLOWED_CURRENT dapat menyebabkan kerusakan atau bahaya!
-*/
+  Pastikan rating maksimum charger/battery sesuai dengan spesifikasi Anda.
+  */
 
 #include <SPI.h>
 #include <mcp_can.h>
@@ -58,7 +58,7 @@ const uint8_t S2_CTRL_PIN = 12;   // Control pin
 
 // Constants
 const float VREF = 3.3;                     // ADC Reference voltage
-const float CP_SCALING_FACTOR = 6 / 2.3;    // CALIBRASI NILAI ADC  (voltage CP / ADC)
+const float CP_SCALING_FACTOR = 6 / 1.85;   // CALIBRASI NILAI ADC  (voltage CP / ADC)
 const unsigned long UPDATE_INTERVAL = 2000; // Frequency update interval (ms)
 const unsigned long PEAK_INTERVAL = 2000;   // Peak voltage update interval (ms)
 
@@ -87,6 +87,8 @@ String getCPStatus(float voltage);
 void vehicleReadyStateClear();
 float getMaxCurrentForObc();
 float getBatteryVoltage();
+float updateAverageVoltage();
+
 // Variables for CAN simulation and web display
 float cpVoltage = 0.0f; // CP S2 voltage measurement
 
@@ -305,14 +307,8 @@ void periodicTask(void *pvParameters)
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
-
-// --- Setup and Main Loop ---
-void setup()
+void canbusSetup()
 {
-    Serial.begin(115200);
-    while (!Serial)
-        ; // Wait for Serial to be ready
-
     // Initialize CAN bus
     if (CAN.begin(MCP_ANY, CAN_250KBPS, MCP_8MHZ) != CAN_OK)
     {
@@ -323,7 +319,15 @@ void setup()
     CAN.setMode(MCP_NORMAL);
     pinMode(CAN_INT, INPUT);
     Serial.println("CAN Ready");
-
+}
+// --- Setup and Main Loop ---
+void setup()
+{
+    Serial.begin(115200);
+    while (!Serial)
+        ; // Wait for Serial to be ready
+    // canbusSetup();
+    Serial.println("canbus not setupped");
     // Initialize shared preferences and load stored settings
     preferences.begin("settings", false);
     targetVoltage = preferences.getFloat("targetVoltage", targetVoltage);

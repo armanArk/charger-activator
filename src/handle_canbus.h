@@ -3,11 +3,11 @@
 // --- CAN Bus Functions ---
 void sendChargerCommand(float voltage, float current, bool startCharging)
 {
-    Serial.print("Sent CAN command. Target Voltage: ");
-    Serial.print(voltage);
-    Serial.print("V, Target Current: ");
-    Serial.print(current);
-    Serial.println("A");
+    // Serial.print("Sent CAN command. Target Voltage: ");
+    // Serial.print(voltage);
+    // Serial.print("V, Target Current: ");
+    // Serial.print(current);
+    // Serial.println("A");
     // Use provided parameters or fall back to global variables
     float commandVoltage = voltage > 0 ? voltage : targetVoltage;
     float commandCurrent = current > 0 ? current : targetCurrent;
@@ -37,11 +37,11 @@ void sendChargerCommand(float voltage, float current, bool startCharging)
     byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
     if (sndStat == CAN_OK)
     {
-        Serial.println("Sent CAN command. OK, current: " + String(commandCurrent), +", voltage:" + String(batteryVoltage));
+        Serial.println("Sent CAN command. OK, current: " + String(commandCurrent) + ", voltage:" + String(batteryVoltage));
     }
     else
     {
-        Serial.println("Error sending CAN command");
+        Serial.println("Sent CAN command. FAILED, current: " + String(commandCurrent) + ", voltage:" + String(batteryVoltage));
     }
 }
 
@@ -111,10 +111,10 @@ void handleReceivingCanbus()
     if (millis() - lastCanReceiveTime > timeoutReceived)
     {
         communicationTimeout = true;
-        if (cpModeEnabled)
-        {
-            vehicleReadyStateClear();
-        }
+        // if (cpModeEnabled)
+        // {
+        //     vehicleReadyStateClear();
+        // }
     }
     else
     {
