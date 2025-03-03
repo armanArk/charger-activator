@@ -25,13 +25,16 @@ const unsigned long PEAK_INTERVAL = 2000;    // Peak voltage update interval (ms
 const unsigned long AVERAGE_INTERVAL = 2000; // Average voltage update interval (ms)
 const unsigned long S2_DELAY = 5000;         // 5 seconds delay before auto vehicle ready
 
+// New calibration delay constant (delay after detecting plug before calibrating)
+const unsigned long CALIBRATION_DELAY = 1000; // 1 second delay for calibration
+
 // Voltage thresholds:
 const float NO_PLUG_VOLTAGE_THRESHOLD = 0.2; // Scaled voltage below which no plug is detected
 const float PLUG_CONNECTED_VOLTAGE = 9.0;    // Target scaled voltage when plug connected
 const float VEHICLE_READY_VOLTAGE = 6.0;     // Target scaled voltage when vehicle ready
 
 // Frequency & ADC tolerances:
-const float FREQUENCY_TOLERANCE = 800.0;            // ±800Hz tolerance around 1kHz;              // ±100Hz tolerance around 1kHz
+const float FREQUENCY_TOLERANCE = 800.0;            // ±800Hz tolerance around 1kHz
 const float ADC_READING_VALIDATION_THRESHOLD = 0.1; // Minimum valid raw ADC voltage
 const float ADC_READING_MAX_THRESHOLD = 3.3;        // Maximum valid raw ADC voltage
 const unsigned int MAX_INVALID_READINGS = 5;        // Number of invalid readings before reset
@@ -64,8 +67,9 @@ unsigned long lastPeakReset = 0;
 unsigned long lastAverageReset = 0;
 unsigned long lastStatusPrint = 0;
 unsigned long lastCPCheck = 0;
-unsigned long s2ActivateTime = 0;          // Time when plug connection was detected
+unsigned long s2ActivateTime = 0;          // Time when plug connection was detected for S2 delay
 unsigned long staticVoltageDetectTime = 0; // Time when static voltage was first detected
+unsigned long plugDetectionTime = 0;       // Time when plug was first detected (for calibration delay)
 
 // Measurement variables
 float frequency = 0;
@@ -75,12 +79,16 @@ float rawPeakVoltage = 0.01; // Raw ADC peak (for debugging)
 float averageVoltage = 0.0;
 float cpScalingFactor = CP_SCALING_FACTOR_DEFAULT; // Auto scaling factor
 
+// New global: store the last finished ADC reading.
+float lastAdcReading = 0.0;
+
 // Flags & state
 bool s2State = false;                  // True if S2 (vehicle ready) is active
 bool plugConnected = false;            // True if plug is connected
 bool staticVoltageDetected = false;    // True if static voltage (no PWM) is detected
 unsigned long invalidReadingCount = 0; // Count of consecutive invalid readings
 CPState currentState = NO_PLUG;        // Current CP state
+bool calibrationDone = false;          // Flag indicating if calibration in PLUG_CONNECTED state is complete
 
 // --- Function Prototypes ---
 void initializeHardware();
@@ -139,25 +147,24 @@ float convertAdcToCpVoltage(float adcVoltage)
     return adcVoltage * cpScalingFactor;
 }
 
+// Modified readVoltage() now saves the result into lastAdcReading.
 float readVoltage()
 {
     const int samples = 3;
     float sum = 0.0;
-
     for (int i = 0; i < samples; i++)
     {
         sum += analogRead(ADC_PIN) * (VREF / 4095.0);
         delayMicroseconds(100);
     }
-
-    return sum / samples;
+    lastAdcReading = sum / samples;
+    return lastAdcReading;
 }
 
 void IRAM_ATTR handleInterrupt()
 {
     unsigned long currentTime = micros();
     bool currentLevel = digitalRead(FREQUENCY_PIN);
-
     if (currentLevel != compState)
     {
         if (currentLevel)
@@ -182,11 +189,9 @@ void initializeHardware()
     pinMode(ADC_PIN, INPUT);
     analogSetAttenuation(ADC_11db);
     analogReadResolution(12);
-
     pinMode(FREQUENCY_PIN, INPUT);
     pinMode(S2_CTRL_PIN, OUTPUT);
     digitalWrite(S2_CTRL_PIN, LOW);
-
     attachInterrupt(digitalPinToInterrupt(FREQUENCY_PIN), handleInterrupt, CHANGE);
 }
 
@@ -194,12 +199,10 @@ void updatePeakVoltage()
 {
     static float currentPeak = 0.01;
     float voltage = readVoltage();
-
     if (voltage > currentPeak)
     {
         currentPeak = voltage;
     }
-
     if (millis() - lastPeakReset >= PEAK_INTERVAL)
     {
         peakVoltage = currentPeak;
@@ -213,13 +216,11 @@ void updateAverageVoltage()
 {
     static float voltageSum = 0.0;
     static unsigned int sampleCount = 0;
-
     if (compState)
     {
         voltageSum += readVoltage();
         sampleCount++;
     }
-
     if (millis() - lastAverageReset >= AVERAGE_INTERVAL)
     {
         averageVoltage = (sampleCount > 0) ? (voltageSum / sampleCount) : 0.0;
@@ -241,9 +242,7 @@ void updateFrequencyAndDutyCycle()
         highTime = 0;
         lowTime = 0;
         interrupts();
-
         frequency = tempPulseCount / (UPDATE_INTERVAL / 1000.0);
-
         if (tempHighTime + tempLowTime > 0)
         {
             dutyCycle = (tempHighTime * 100.0) / (tempHighTime + tempLowTime);
@@ -252,7 +251,6 @@ void updateFrequencyAndDutyCycle()
         {
             dutyCycle = 0;
         }
-
         lastFrequencyUpdate = millis();
     }
 }
@@ -266,7 +264,7 @@ void printDebugInfo(String message)
     Serial.print("V | Scaled Peak: ");
     Serial.print(convertAdcToCpVoltage(rawPeakVoltage), 2);
     Serial.print("V | Current ADC: ");
-    Serial.print(readVoltage(), 3);
+    Serial.print(lastAdcReading, 3);
     Serial.print("V | Frequency: ");
     Serial.print(frequency, 1);
     Serial.print("Hz | Scaling Factor: ");
@@ -319,7 +317,6 @@ void handleSerialCommands()
         {
             Serial.read();
         }
-
         switch (cmd)
         {
         case 'c':
@@ -379,12 +376,18 @@ void resetLogic()
     staticVoltageDetectTime = 0;
     invalidReadingCount = 0;
     currentState = NO_PLUG;
+    calibrationDone = false;
 }
 
+//
+// In adjustScalingFactor(), we now use the stored lastAdcReading (the last finished ADC reading)
+// for calibration instead of initiating a new ADC conversion immediately.
+//
 void adjustScalingFactor(float targetVoltage)
 {
-    float adcValue = readVoltage();
-    Serial.print("Raw ADC Value: ");
+    // Use the last finished ADC reading stored in lastAdcReading.
+    float adcValue = lastAdcReading;
+    Serial.print("Last ADC Value: ");
     Serial.println(adcValue, 3);
 
     if (adcValue > ADC_READING_VALIDATION_THRESHOLD && adcValue < ADC_READING_MAX_THRESHOLD)
@@ -392,10 +395,10 @@ void adjustScalingFactor(float targetVoltage)
         const int avgSamples = 10;
         float sum = 0;
         int validSamples = 0;
-
+        // Use the last finished ADC reading repeatedly (assuming signal stability)
         for (int i = 0; i < avgSamples; i++)
         {
-            float sample = readVoltage();
+            float sample = lastAdcReading;
             if (sample > ADC_READING_VALIDATION_THRESHOLD)
             {
                 sum += sample;
@@ -403,19 +406,15 @@ void adjustScalingFactor(float targetVoltage)
             }
             delay(20);
         }
-
         if (validSamples > 0)
         {
             float avgValue = sum / validSamples;
             float newScalingFactor = targetVoltage / avgValue;
-
             if (newScalingFactor > cpScalingFactor * 2)
                 newScalingFactor = cpScalingFactor * 2;
             else if (newScalingFactor < cpScalingFactor / 2)
                 newScalingFactor = cpScalingFactor / 2;
-
             cpScalingFactor = newScalingFactor;
-
             Serial.print("Scaling Factor set to: ");
             Serial.print(cpScalingFactor, 3);
             Serial.print(" (Target: ");
@@ -442,14 +441,12 @@ bool validateReadings(float targetVoltage)
     float cpVoltage = convertAdcToCpVoltage(peakVoltage);
     // Select tolerance based on the current state.
     float tolerance = (currentState == VEHICLE_READY) ? CP_VOLTAGE_TOLERANCE_VEHICLE : CP_VOLTAGE_TOLERANCE_PLUG;
-
     // For static voltage mode, only check voltage.
     if (staticVoltageDetected)
     {
         return (cpVoltage >= targetVoltage - tolerance &&
                 cpVoltage <= targetVoltage + tolerance * 2);
     }
-
     // For PWM mode, check both frequency and voltage.
     return ((frequency >= 900.0 && frequency <= 1100.0) &&
             cpVoltage >= targetVoltage - tolerance &&
@@ -460,11 +457,9 @@ bool isPlugConnected()
 {
     float rawVoltage = readVoltage();
     float scaledVoltage = convertAdcToCpVoltage(rawVoltage);
-
     // Modified to be more lenient with frequency detection.
     bool validFrequency = (frequency >= 900.0 && frequency <= 1100.0);
     bool validVoltage = (rawVoltage >= 1.5 && rawVoltage <= ADC_READING_MAX_THRESHOLD);
-
     // Debug information when a plug is potentially detected.
     if (validVoltage)
     {
@@ -492,7 +487,6 @@ bool isPlugConnected()
     {
         staticVoltageDetectTime = 0;
     }
-
     return (validFrequency && validVoltage) || (staticVoltageDetected && validVoltage);
 }
 
@@ -501,7 +495,6 @@ bool isStaticVoltagePresent()
     float rawVoltage = readVoltage();
     bool validVoltage = (rawVoltage >= 1.5 && rawVoltage <= ADC_READING_MAX_THRESHOLD);
     bool noFrequency = (frequency < 10.0);
-
     return validVoltage && noFrequency;
 }
 
@@ -520,18 +513,37 @@ void processCP()
         }
     }
     // --- Transition from NO_PLUG to PLUG_CONNECTED ---
-    else if (currentState == NO_PLUG && (isPlugConnected() || (frequency > 900.0 && frequency < 1100.0)))
+    else if (currentState == NO_PLUG && isPlugConnected())
     {
-        printDebugInfo("Plug Connected, transitioning to PLUG_CONNECTED state");
-        plugConnected = true;
+        plugDetectionTime = millis(); // Record time of plug detection for calibration delay
         currentState = PLUG_CONNECTED;
-        adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
-        s2ActivateTime = millis();
+        plugConnected = true;
+        calibrationDone = false;
+        printDebugInfo("Plug detected, waiting for calibration delay");
+    }
+    // --- In PLUG_CONNECTED state: Perform calibration after a delay if not already done ---
+    else if (currentState == PLUG_CONNECTED && !calibrationDone)
+    {
+        if (millis() - plugDetectionTime >= CALIBRATION_DELAY)
+        {
+            // Only calibrate if signal is stable (i.e. valid PWM frequency)
+            if (frequency >= 900.0 && frequency <= 1100.0)
+            {
+                adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
+                calibrationDone = true;
+                s2ActivateTime = millis(); // Start S2 activation delay timer after calibration
+                printDebugInfo("Calibration complete. Waiting for S2 activation delay.");
+            }
+            else
+            {
+                printDebugInfo("Signal not stable for calibration, waiting...");
+            }
+        }
     }
     // --- Transition from PLUG_CONNECTED to VEHICLE_READY ---
     else if (currentState == PLUG_CONNECTED && !s2State && (millis() - s2ActivateTime >= S2_DELAY))
     {
-        if ((frequency > 900.0 && frequency < 1100.0) ||
+        if ((frequency >= 900.0 && frequency <= 1100.0) ||
             (staticVoltageDetected && currentRawVoltage >= 1.5))
         {
             printDebugInfo("Auto transitioning to VEHICLE_READY state after delay");
@@ -547,7 +559,7 @@ void processCP()
             s2ActivateTime = millis();
         }
     }
-    // --- In VEHICLE_READY state: Validate readings remain near 6V ---
+    // --- In VEHICLE_READY state: Validate readings remain near target ---
     else if (currentState == VEHICLE_READY)
     {
         if (validateReadings(VEHICLE_READY_VOLTAGE))
@@ -577,7 +589,7 @@ void processCP()
             }
         }
     }
-    // If in PLUG_CONNECTED state, periodically confirm valid voltage.
+    // --- If in PLUG_CONNECTED state, periodically confirm valid voltage.
     else if (currentState == PLUG_CONNECTED)
     {
         if (convertAdcToCpVoltage(peakVoltage) < NO_PLUG_VOLTAGE_THRESHOLD && frequency < 10 && !staticVoltageDetected)
@@ -595,8 +607,7 @@ void processCP()
             }
         }
     }
-
-    // Check for static voltage in any state.
+    // --- Check for static voltage in any state ---
     if (!staticVoltageDetected && isStaticVoltagePresent() &&
         (millis() - staticVoltageDetectTime > STATIC_VOLTAGE_TIMEOUT) &&
         currentState != NO_PLUG)
@@ -609,36 +620,29 @@ void processCP()
 void setup()
 {
     initializeHardware();
-
     // Ensure S2 is OFF at startup.
     digitalWrite(S2_CTRL_PIN, LOW);
     s2State = false;
-
     Serial.println("\n=== ESP32 EV Charging Controller ===");
     Serial.println("Commands: 'c' - Activate S2, 'b' - Deactivate S2, 'r' - Reset, 'd' - Debug info, 's<float>' - Set scaling");
-
     delay(1000); // Allow time for stabilization
-
     lastFrequencyUpdate = millis();
     lastPeakReset = millis();
     lastAverageReset = millis();
     lastStatusPrint = millis();
     lastCPCheck = millis();
-
     for (int i = 0; i < 5; i++)
     {
         updatePeakVoltage();
         updateFrequencyAndDutyCycle();
         delay(100);
     }
-
-    if (frequency > 900.0 && frequency < 1100.0)
+    if (frequency >= 900.0 && frequency <= 1100.0)
     {
         Serial.println("Plug already connected at startup (PWM detected).");
         plugConnected = true;
         currentState = PLUG_CONNECTED;
-        adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
-        s2ActivateTime = millis();
+        plugDetectionTime = millis();
     }
     else if (readVoltage() >= 1.5)
     {
@@ -659,18 +663,17 @@ void loop()
     updateAverageVoltage();
     updateFrequencyAndDutyCycle();
     printSystemStatus();
-
+    // Additional check: if no plug but valid frequency/voltage is detected, force plug detection.
     if (currentState == NO_PLUG &&
-        frequency > 900.0 && frequency < 1100.0 &&
+        frequency >= 900.0 && frequency <= 1100.0 &&
         peakVoltage > 1.5 && !plugConnected)
     {
         printDebugInfo("Forcing plug detection - valid frequency detected");
+        plugDetectionTime = millis();
         plugConnected = true;
         currentState = PLUG_CONNECTED;
-        adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
-        s2ActivateTime = millis();
+        calibrationDone = false;
     }
-
     if (millis() - lastCPCheck >= UPDATE_INTERVAL)
     {
         processCP();
