@@ -1,0 +1,99 @@
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0030,len:1184
+load:0x40078000,len:13232
+load:0x40080400,len:3028
+entry 0x400805e4
+
+=== ESP32 EV Charging Controller ===
+Commands: 'c' - Activate S2, 'b' - Deactivate S2, 'r' - Reset, 'd' - Debug info, 's<float>' - Set scaling
+No plug detected at startup.
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 0.010V | Scaled Peak: 0.03V | State: E | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 0.010V | Scaled Peak: 0.03V | State: E | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 0.131V | Scaled Peak: 0.39V | State: E | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 0.184V | Scaled Peak: 0.55V | State: E | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 59.0Hz | DC: 1.1% | Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 1.0Hz | DC: 1.1% | Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 572.5Hz | DC: 91.2% | Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 975.5Hz | DC: 54.4% | Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+---------- DEBUG INFO ----------
+Plug Connected, transitioning to PLUG_CONNECTED state
+Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | Current ADC: 2.641V | Frequency: 975.5Hz | Scaling Factor: 3.000
+-------------------------------
+Raw ADC Value: 0.000
+Invalid ADC reading (0.00), scaling factor NOT updated!
+Freq: 978.0Hz | DC: 54.3% | Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: PLUG_CONNECTED
+---------- DEBUG INFO ----------
+Transitioning to VEHICLE_READY state
+Raw ADC Peak: 3.300V | Scaled Peak: 9.90V | Current ADC: 2.656V | Frequency: 978.0Hz | Scaling Factor: 3.000
+-------------------------------
+Raw ADC Value: 0.940
+Scaling Factor set to: 4.175 (Target: 6.0V, Avg ADC: 1.437V)
+Freq: 959.0Hz | DC: 54.8% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 0.979V | Frequency: 959.0Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1025.5Hz | DC: 53.9% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 1.201V | Frequency: 1025.5Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1043.0Hz | DC: 54.8% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 0.000V | Frequency: 1043.0Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 966.5Hz | DC: 54.6% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 0.928V | Frequency: 966.5Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1024.5Hz | DC: 54.0% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 1.831V | Frequency: 1024.5Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1089.0Hz | DC: 54.0% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 0.000V | Frequency: 1089.0Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1090.0Hz | DC: 54.0% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 1.931V | Frequency: 1090.0Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1082.5Hz | DC: 54.0% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 0.000V | Frequency: 1082.5Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1084.0Hz | DC: 54.0% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 0.000V | Frequency: 1084.0Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1089.0Hz | DC: 53.9% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 1.295V | Frequency: 1089.0Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1013.5Hz | DC: 54.0% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 1.676V | Frequency: 1013.5Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1011.5Hz | DC: 53.9% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | Current ADC: 1.385V | Frequency: 1011.5Hz | Scaling Factor: 4.175
+-------------------------------
+Freq: 1020.0Hz | DC: 53.7% | Raw ADC Peak: 3.300V | Scaled Peak: 13.78V | State: A | S2: ON | cp_factor: 4.175 | CP_State: VEHICLE_READY
+---------- DEBUG INFO ----------
+Invalid readings in VEHICLE_READY state, resetting...
+Raw ADC Peak: 3.300V | Scaled P
