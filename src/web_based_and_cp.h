@@ -34,33 +34,36 @@ const float MAX_ALLOWED_CURRENT = 16;                       // Maximum allowed c
 #define BMS_CONTROL_ID 0x1806E5F4                           // CAN ID for receiving commands from BMS
 
 // ----- Global Variables -----
+unsigned long pmillis = 0;                 // For timing periodic operations
+unsigned long cutoffStartTime = 0;         // Timer for cutoff
+unsigned long uptime = 0;                  // System uptime (seconds)
+const unsigned long delayCutoff = 30000;   // 30 seconds delay for cutoff
 float targetVoltage = MAX_ALLOWED_VOLTAGE; // Default target voltage
 float targetCurrent = 6;                   // Default target current
-unsigned long pmillis = 0;                 // For timing periodic operations
 bool chargerActive = false;                // Charging flag (true = charging, false = stopped)
 String chargingStatusText = "Stopped";     // Status text for display
-float cutoffCurrent = 4.0;                 // Default cutoff current
-unsigned long cutoffStartTime = 0;         // Timer for cutoff
-bool checkingCutoff = false;               // Flag for cutoff monitoring
-bool cutoffTriggered = false;              // Flag to indicate that cutoff has occurred
-const unsigned long delayCutoff = 30000;   // 30 seconds delay for cutoff
-unsigned long uptime = 0;                  // System uptime (seconds)
-bool chargingObcState = false;             // OBC charging state
+String lastCpState = "A";
+float cutoffCurrent = 4.0;     // Default cutoff current
+bool checkingCutoff = false;   // Flag for cutoff monitoring
+bool cutoffTriggered = false;  // Flag to indicate that cutoff has occurred
+bool chargingObcState = false; // OBC charging state
 bool vehicleReadyState = false;
 bool vehicleReadyStateCleared = false; // Track if it has been cleared
 bool hasStartedCharging = false;
-String lastCpState = "A";
+
+// --- Constants ---
+const float VREF = 3.3;                       // ADC Reference voltage
+const float CP_SCALING_FACTOR_DEFAULT = 3.0;  // Initial scaling factor (raw*3 ≈ 9.9V at full-scale)
+const unsigned long UPDATE_INTERVAL = 4000;   // Update interval (ms)
+const unsigned long PEAK_INTERVAL = 2000;     // Peak voltage update interval (ms)
+const unsigned long AVERAGE_INTERVAL = 2000;  // Average voltage update interval (ms)
+const unsigned long S2_DELAY = 3000;          // 5 seconds delay before auto vehicle ready
+const unsigned long CALIBRATION_DELAY = 3000; // 1 second delay for calibration
 
 // Pin Definitions
 const uint8_t ADC_PIN = 33;       // ADC input pin
 const uint8_t FREQUENCY_PIN = 34; // PWM input pin
 const uint8_t S2_CTRL_PIN = 12;   // Control pin
-
-// Constants
-const float VREF = 3.3;                     // ADC Reference voltage
-const float CP_SCALING_FACTOR = 6 / 1.85;   // CALIBRASI NILAI ADC  (voltage CP / ADC)
-const unsigned long UPDATE_INTERVAL = 2000; // Frequency update interval (ms)
-const unsigned long PEAK_INTERVAL = 2000;   // Peak voltage update interval (ms)
 
 // Global variables
 volatile unsigned long pulseCount = 0;
@@ -75,11 +78,58 @@ float dutyCycle = 0;
 float currentPeak = 0.01; // Avoid sudden zero issues
 float peakVoltage = 0.01;
 
+const float CP_VOLTAGE_TOLERANCE_PLUG = 1.0;
+const float CP_VOLTAGE_TOLERANCE_VEHICLE = 1.5;
+
+// --- State Enumeration ---
+enum CPState
+{
+    NO_PLUG,
+    PLUG_CONNECTED,
+    VEHICLE_READY
+};
+
+// Voltage thresholds:
+const float NO_PLUG_VOLTAGE_THRESHOLD = 0.2; // Scaled voltage below which no plug is detected
+const float PLUG_CONNECTED_VOLTAGE = 9.0;    // Target scaled voltage when plug connected
+const float VEHICLE_READY_VOLTAGE = 6.0;     // Target scaled voltage when vehicle ready
+
+// Frequency & ADC tolerances:
+const float FREQUENCY_TOLERANCE = 800.0;            // ±800Hz tolerance around 1kHz
+const float ADC_READING_VALIDATION_THRESHOLD = 0.1; // Minimum valid raw ADC voltage
+const float ADC_READING_MAX_THRESHOLD = 3.3;        // Maximum valid raw ADC voltage
+const unsigned int MAX_INVALID_READINGS = 5;        // Number of invalid readings before reset
+const unsigned long STATIC_VOLTAGE_TIMEOUT = 10000; // Time to wait for PWM before accepting static voltage
+
+volatile bool compState = false; // Captures comparator (FREQUENCY_PIN) state
+unsigned long lastAverageReset = 0;
+unsigned long lastStatusPrint = 0;
+unsigned long lastCPCheck = 0;
+unsigned long s2ActivateTime = 0;          // Time when plug connection was detected for S2 delay
+unsigned long staticVoltageDetectTime = 0; // Time when static voltage was first detected
+unsigned long plugDetectionTime = 0;       // Time when plug was first detected (for calibration delay)
+
+float rawPeakVoltage = 0.01; // Raw ADC peak (for debugging)
+float averageVoltage = 0.0;
+float cpScalingFactor = CP_SCALING_FACTOR_DEFAULT; // Auto scaling factor
+
+// New global: store the last finished ADC reading.
+float lastAdcReading = 0.0;
+
+// Flags & state
+bool s2State = false;                  // True if S2 (vehicle ready) is active
+bool plugConnected = false;            // True if plug is connected
+bool staticVoltageDetected = false;    // True if static voltage (no PWM) is detected
+unsigned long invalidReadingCount = 0; // Count of consecutive invalid readings
+CPState currentState = NO_PLUG;        // Current CP state
+bool calibrationDone = false;          // Flag indicating if calibration in PLUG_CONNECTED state is complete
+float cpVoltage = 0.0f;
+
 // Function prototypes
 void initializeHardware();
 float readVoltage();
 float convertAdcToCpVoltage(float adcVoltage);
-float updatePeakVoltage();
+void updatePeakVoltage();
 void updateFrequencyAndDutyCycle();
 void handleSerialCommands();
 float getMaxCurrent(float dutyCycle);
@@ -87,10 +137,12 @@ String getCPStatus(float voltage);
 void vehicleReadyStateClear();
 float getMaxCurrentForObc();
 float getBatteryVoltage();
-float updateAverageVoltage();
-
-// Variables for CAN simulation and web display
-float cpVoltage = 0.0f; // CP S2 voltage measurement
+void updateAverageVoltage();
+void resetLogic();
+void adjustScalingFactor(float targetVoltage);
+bool validateReadings(float targetVoltage);
+bool isPlugConnected();
+bool isStaticVoltagePresent();
 
 // ----- Function Prototypes -----
 void handleRoot();
@@ -107,6 +159,7 @@ void decodeChargerBroadcast(byte msgData[], byte len);
 bool keyExists(const char *input, const char *key);          // utility function
 const char *getValueKey(const char *input, const char *key); // utility function
 void printDecodeDataObc();
+void printSystemStatus();
 
 // Variables for web display
 String webCANId = "";
@@ -120,6 +173,7 @@ bool startState = false;
 bool communicationTimeout = false;
 bool isActiveOnStartup = false;
 bool cpModeEnabled = false; // Track CP mode state
+bool cutoffEnabled = false; // Track CP mode state
 
 #include "handle_canbus.h"
 #include "handle_web.h"
@@ -158,7 +212,6 @@ void startCharger()
 {
     chargerActive = true;
     checkingCutoff = false;
-    cutoffTriggered = false; // Reset cutoff flag when charging starts
     chargingStatusText = "Charging";
     Serial.println("Charger started");
 }
@@ -168,7 +221,6 @@ void stopCharger()
     chargerActive = false;
     stopChargerCommand();
     checkingCutoff = false;
-    cutoffTriggered = false;
     chargingStatusText = "Stopped";
     Serial.println("Charger stopped");
 }
@@ -176,7 +228,6 @@ void stopCharger()
 void periodicTask(void *pvParameters)
 {
     unsigned long lastTime = millis();
-
     for (;;)
     {
         unsigned long currentTime = millis();
@@ -185,82 +236,190 @@ void periodicTask(void *pvParameters)
         {
             lastTime = currentTime;
             uptime = millis() / 4000;
-            Serial.print("STATE:");
-            Serial.print(getCPStatus(convertAdcToCpVoltage(peakVoltage)));
-            Serial.print(",cpMode:");
-            Serial.println(cpModeEnabled);
-
             // CP Mode Logic
             if (cpModeEnabled)
             {
-                float maxAllowedCurrent = getMaxCurrent(dutyCycle);
-                float adjustedCurrent = targetCurrent;
-                if (adjustedCurrent > getMaxCurrentForObc())
-                {
-                    adjustedCurrent = getMaxCurrentForObc();
-                }
-                // Serial.print("Adjusted Current: ");
-                sendChargerCommand(targetVoltage, adjustedCurrent, true);
+                float cpVoltage = convertAdcToCpVoltage(peakVoltage);
+                float currentRawVoltage = readVoltage();
 
-                // Reset to state A if peakVoltage, frequency, and dutyCycle are zero
-                // detect reset A only frequency == 0 && dutyCycle == 0!
-                if (frequency == 0 && dutyCycle == 0)
+                // *** AUTO CONNECT LOGIC ***
+                // Force plug detection if a valid PWM signal is detected and plugConnected is false.
+                if (!plugConnected &&
+                    frequency >= 900.0 && frequency <= 1100.0 &&
+                    peakVoltage > 1.5)
                 {
-                    vehicleReadyStateClear();
-                    // sendChargerCommand(targetVoltage, 0, false);
-                    // Serial.println("Reset to state A due to zero peakVoltage, frequency, and dutyCycle");
-                    continue; // Skip the rest of the loop iteration
-                }
-                else
-                {
-                    vehicleReady();
-                }
-                String currentCpState = getCPStatus(convertAdcToCpVoltage(peakVoltage));
-
-                // State changes to B (Vehicle Connected)
-                if (currentCpState == "B" && !vehicleReadyState)
-                {
-                    vehicleReady();
-                    vehicleReadyState = true;
-                    vehicleReadyStateCleared = false;
-                    Serial.println("Vehicle connected - State B");
-                }
-                // State changes to C (Vehicle Ready for Charging)
-                else if (currentCpState == "C")
-                {
-                    float maxAllowedCurrent = getMaxCurrentForObc();
-                    float adjustedCurrent = min(targetCurrent, maxAllowedCurrent);
-                    // sendChargerCommand(targetVoltage, adjustedCurrent, true);
-                    if (!hasStartedCharging)
+                    if (cutoffTriggered)
                     {
-                        hasStartedCharging = true;
-                        Serial.println("Vehicle ready to charge - State C");
-                        Serial.printf("Max allowed current: %.2f A\n", maxAllowedCurrent);
+                        printDebugInfo("valid frequency detected - but cutoff triggered");
                     }
-                }
-                else
-                {
-                    // Jika komunikasi timeout
-                    if (hasStartedCharging)
+                    else
                     {
-                        vehicleReadyStateClear();
-                        // sendChargerCommand(targetVoltage, 0, false);
-                        Serial.println("Charging stopped due to communication timeout");
+                        printDebugInfo("Forcing plug detection - valid frequency detected");
+                        plugDetectionTime = millis();
+                        plugConnected = true;
+                        currentState = PLUG_CONNECTED;
+                        calibrationDone = false;
                     }
                 }
 
-                // State A atau E (Disconnected atau Error)
-                if ((currentCpState == "A" || currentCpState == "E") &&
-                    lastCpState != "A" && lastCpState != "E")
+                // --- NO_PLUG: If scaled voltage is very low and frequency is near zero.
+                if (cpVoltage < NO_PLUG_VOLTAGE_THRESHOLD && frequency < 10 && !staticVoltageDetected)
                 {
-                    // vehicleReadyStateClear();
-                    // sendChargerCommand(targetVoltage, 0, false);
-                    Serial.println("Vehicle disconnected or error - State " + currentCpState);
+                    if (currentState != NO_PLUG)
+                    {
+                        printDebugInfo("Transitioning to NO_PLUG state");
+                        resetLogic();
+                    }
+                    cutoffTriggered = false;
                 }
+                // --- Transition from NO_PLUG to PLUG_CONNECTED ---
+                else if (currentState == NO_PLUG && isPlugConnected())
+                {
+                    plugDetectionTime = millis(); // Record time of plug detection for calibration delay
+                    currentState = PLUG_CONNECTED;
+                    plugConnected = true;
+                    calibrationDone = false;
+                    printDebugInfo("Plug detected, waiting for calibration delay");
+                }
+                if (!cutoffTriggered)
+                {
+                    // --- In PLUG_CONNECTED state: Perform calibration after a delay if not already done ---
+                    if (currentState == PLUG_CONNECTED && !calibrationDone)
+                    {
+                        if (millis() - plugDetectionTime >= CALIBRATION_DELAY)
+                        {
+                            // Only calibrate if signal is stable (i.e. valid PWM frequency)
+                            if (frequency >= 900.0 && frequency <= 1100.0)
+                            {
+                                adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
+                                calibrationDone = true;
+                                s2ActivateTime = millis(); // Start S2 activation delay timer after calibration
+                                printDebugInfo("Calibration complete. Waiting for S2 activation delay.");
+                            }
+                            else
+                            {
+                                printDebugInfo("Signal not stable for calibration, waiting...");
+                            }
+                        }
+                    }
 
-                lastCpState = currentCpState;
+                    // --- Transition from PLUG_CONNECTED to VEHICLE_READY ---
+                    else if (currentState == PLUG_CONNECTED && !s2State && (millis() - s2ActivateTime >= S2_DELAY))
+                    {
+
+                        if ((frequency >= 900.0 && frequency <= 1100.0) ||
+                            (staticVoltageDetected && currentRawVoltage >= 1.5))
+                        {
+                            printDebugInfo("Auto transitioning to VEHICLE_READY state after delay");
+                            digitalWrite(S2_CTRL_PIN, HIGH);
+                            s2State = true;
+                            // adjustScalingFactor(VEHICLE_READY_VOLTAGE);
+                            currentState = VEHICLE_READY;
+                            delay(200);
+                        }
+                        else
+                        {
+                            printDebugInfo("Failed to auto-transition: not a valid signal");
+                            s2ActivateTime = millis();
+                        }
+                    }
+                    else if (currentState == VEHICLE_READY)
+                    {
+                        if (validateReadings(VEHICLE_READY_VOLTAGE))
+                        {
+                            invalidReadingCount = 0;
+                            if (millis() - lastCPCheck >= 10000)
+                            {
+                                printDebugInfo("Vehicle Ready confirmed, S2 is ON");
+                                lastCPCheck = millis();
+                            }
+                            float adjustedCurrent = min(targetCurrent, getMaxCurrentForObc());
+                            sendChargerCommand(targetVoltage, adjustedCurrent, true);
+                            // --- CUTOFF CURRENT LOGIC (only in CP mode) ---
+                            // Check if the charging current (batteryCurrent) is below cutoffCurrent.
+
+                            if (batteryCurrent <= cutoffCurrent)
+                            {
+                                if (cutoffEnabled)
+                                {
+                                    if (!checkingCutoff)
+                                    {
+                                        checkingCutoff = true;
+                                        cutoffStartTime = millis();
+                                        Serial.println("Cutoff: Low current detected, starting timer...");
+                                    }
+                                    else if (millis() - cutoffStartTime >= delayCutoff)
+                                    {
+                                        cutoffTriggered = true;
+                                        stopCharger(); // This stops charging immediately.
+                                        Serial.println("Charging stopped due to current cutoff");
+                                        // Skip further processing in this iteration.
+                                        resetLogicCutoff();
+                                        vTaskDelay(10 / portTICK_PERIOD_MS);
+                                        continue;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // If current has recovered above the cutoff threshold, reset the cutoff timer.
+                                if (checkingCutoff)
+                                {
+                                    Serial.println("Cutoff: Current recovered, resetting cutoff timer");
+                                }
+                                checkingCutoff = false;
+                                cutoffStartTime = millis(); // Optional: reset timer
+                            }
+                        }
+                        else if (cpVoltage < NO_PLUG_VOLTAGE_THRESHOLD && frequency < 10 && !staticVoltageDetected)
+                        {
+                            printDebugInfo("Vehicle disconnected from VEHICLE_READY state");
+                            resetLogic();
+                        }
+                        else
+                        {
+                            invalidReadingCount++;
+                            printDebugInfo("Invalid reading in VEHICLE_READY state (" +
+                                           String(invalidReadingCount) + "/" +
+                                           String(MAX_INVALID_READINGS) + ")");
+                            if (invalidReadingCount >= MAX_INVALID_READINGS)
+                            {
+                                printDebugInfo("Too many invalid readings, resetting...");
+                                resetLogic();
+                            }
+                        }
+                    }
+
+                    // --- If in PLUG_CONNECTED state, periodically confirm valid voltage.
+                    else if (currentState == PLUG_CONNECTED)
+                    {
+                        if (convertAdcToCpVoltage(peakVoltage) < NO_PLUG_VOLTAGE_THRESHOLD && frequency < 10 && !staticVoltageDetected)
+                        {
+                            printDebugInfo("Lost connection in PLUG_CONNECTED state");
+                            resetLogic();
+                        }
+                        else if (millis() - lastCPCheck >= 5000)
+                        {
+                            unsigned long remainingTime = (s2ActivateTime + S2_DELAY) - millis();
+                            if (remainingTime < S2_DELAY)
+                            {
+                                printDebugInfo("PLUG_CONNECTED: Waiting " + String(remainingTime / 1000) +
+                                               " seconds for auto S2 activation");
+                            }
+                        }
+                    }
+                    // --- Check for static voltage in any state ---
+                    if (!staticVoltageDetected && isStaticVoltagePresent() &&
+                        (millis() - staticVoltageDetectTime > STATIC_VOLTAGE_TIMEOUT) &&
+                        currentState != NO_PLUG)
+                    {
+                        staticVoltageDetected = true;
+                        printDebugInfo("Static voltage confirmed (no PWM)");
+                    }
+                }
+                // Non-CP Mode Logic
             }
-            // Non-CP Mode Logic
+
             else if (chargerActive)
             {
                 if (!communicationTimeout)
@@ -275,34 +434,8 @@ void periodicTask(void *pvParameters)
                 }
             }
 
-            // Cutoff Logic (hanya untuk non-CP mode)
-            // if (!cpModeEnabled && chargerActive && !cutoffTriggered && !communicationTimeout)
-            // {
-            //     if (batteryCurrent <= cutoffCurrent)
-            //     {
-            //         if (!checkingCutoff)
-            //         {
-            //             checkingCutoff = true;
-            //             cutoffStartTime = millis();
-            //         }
-            //         else if (millis() - cutoffStartTime >= delayCutoff)
-            //         {
-            //             cutoffTriggered = true;
-            //             stopCharger();
-            //             Serial.println("Charging stopped due to current cutoff");
-            //         }
-            //     }
-            //     else
-            //     {
-            //         checkingCutoff = false;
-            //     }
-            // }
-            // else
-            // {
-            //     checkingCutoff = false;
-            // }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 void canbusSetup()
@@ -333,7 +466,9 @@ void setup()
     cutoffCurrent = preferences.getFloat("cutoffCurrent", cutoffCurrent);
     isActiveOnStartup = preferences.getBool("onStartup", isActiveOnStartup);
     cpModeEnabled = preferences.getBool("cpMode", cpModeEnabled);
+    cutoffEnabled = preferences.getBool("tgCutoff", cutoffEnabled);
 
+    Serial.print("==================================================");
     Serial.print("Loaded target voltage: ");
     Serial.println(targetVoltage);
     Serial.print("Loaded target current: ");
@@ -344,6 +479,9 @@ void setup()
     Serial.println(isActiveOnStartup);
     Serial.print("Loaded cpModeEnabled: ");
     Serial.println(cpModeEnabled);
+    Serial.print("Loaded tgCuttoff: ");
+    Serial.println(cutoffEnabled);
+    Serial.print("==================================================");
 
     // Initialize WiFi in Access Point mode
     WiFi.softAP(ssid, password);
@@ -358,7 +496,6 @@ void setup()
     server.begin();
 
     startCharger();
-
     // Create RTOS tasks
     xTaskCreatePinnedToCore(
         webServerTask,   // Task function
@@ -395,8 +532,8 @@ void setup()
         1,
         NULL,
         1);
-
-    initializeCP();
+    initializeHardware();
+    cpDetectStartup();
 }
 
 void loop()
@@ -405,6 +542,7 @@ void loop()
     handleSerialCommands();
     updatePeakVoltage();
     updateFrequencyAndDutyCycle();
+    printSystemStatus();
 }
 void webServerTask(void *pvParameters)
 {

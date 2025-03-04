@@ -3,11 +3,6 @@
 // --- CAN Bus Functions ---
 void sendChargerCommand(float voltage, float current, bool startCharging)
 {
-    // Serial.print("Sent CAN command. Target Voltage: ");
-    // Serial.print(voltage);
-    // Serial.print("V, Target Current: ");
-    // Serial.print(current);
-    // Serial.println("A");
     // Use provided parameters or fall back to global variables
     float commandVoltage = voltage > 0 ? voltage : targetVoltage;
     float commandCurrent = current > 0 ? current : targetCurrent;

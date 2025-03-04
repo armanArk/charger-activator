@@ -1,5 +1,218 @@
-// Pindahkan fungsi ini ke bagian atas file, sebelum fungsi lainnya
+void printSystemStatus()
+{
+    if (millis() - lastStatusPrint >= 2000)
+    {
+        Serial.print("Freq: ");
+        Serial.print(frequency, 1);
+        Serial.print("Hz | DC: ");
+        Serial.print(dutyCycle, 1);
+        Serial.print("% | Raw ADC Peak: ");
+        Serial.print(String(rawPeakVoltage, 3));
+        Serial.print("V | Scaled Peak: ");
+        Serial.print(convertAdcToCpVoltage(peakVoltage), 2);
+        Serial.print("V | State: ");
+        Serial.print(getCPStatus(convertAdcToCpVoltage(peakVoltage)));
+        Serial.print(" | S2: ");
+        Serial.print(digitalRead(S2_CTRL_PIN) ? "ON" : "OFF");
+        Serial.print(" | cp_factor: ");
+        Serial.print(String(cpScalingFactor, 3));
+        Serial.print(" | CP_State: ");
+        switch (currentState)
+        {
+        case NO_PLUG:
+            Serial.print("NO_PLUG");
+            break;
+        case PLUG_CONNECTED:
+            Serial.print("PLUG_CONNECTED");
+            break;
+        case VEHICLE_READY:
+            Serial.print("VEHICLE_READY");
+            break;
+        }
+        Serial.print(staticVoltageDetected ? " [STATIC]" : "");
+        Serial.print(" | cutoffTrg:");
+        Serial.println(cutoffTriggered);
+        lastStatusPrint = millis();
+    }
+}
+void cpDetectStartup()
+{
+    lastFrequencyUpdate = millis();
+    lastPeakReset = millis();
+    lastAverageReset = millis();
+    lastStatusPrint = millis();
+    lastCPCheck = millis();
 
+    for (int i = 0; i < 5; i++)
+    {
+        updatePeakVoltage();
+        updateFrequencyAndDutyCycle();
+        delay(100);
+    }
+
+    if (frequency > 900.0 && frequency < 1100.0)
+    {
+        Serial.println("Plug already connected at startup (PWM detected).");
+        plugConnected = true;
+        currentState = PLUG_CONNECTED;
+        adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
+        s2ActivateTime = millis();
+    }
+    else if (readVoltage() >= 1.5)
+    {
+        Serial.println("Potential static voltage detected at startup.");
+        staticVoltageDetectTime = millis();
+    }
+    else
+    {
+        Serial.println("No plug detected at startup.");
+        currentState = NO_PLUG;
+    }
+}
+void printDebugInfo(String message)
+{
+    Serial.println("---------- DEBUG INFO ----------");
+    Serial.println(message);
+    Serial.print("Raw ADC Peak: ");
+    Serial.print(rawPeakVoltage, 3);
+    Serial.print("V | Scaled Peak: ");
+    Serial.print(convertAdcToCpVoltage(rawPeakVoltage), 2);
+    Serial.print("V | Current ADC: ");
+    Serial.print(lastAdcReading, 3);
+    Serial.print("V | Frequency: ");
+    Serial.print(frequency, 1);
+    Serial.print("Hz | Scaling Factor: ");
+    Serial.print(cpScalingFactor, 3);
+    Serial.println("\n-------------------------------");
+}
+
+void resetLogic()
+{
+    Serial.println("Resetting Logic");
+    digitalWrite(S2_CTRL_PIN, LOW);
+    s2State = false;
+    plugConnected = false;
+    staticVoltageDetected = false;
+    cpScalingFactor = CP_SCALING_FACTOR_DEFAULT;
+    s2ActivateTime = 0;
+    staticVoltageDetectTime = 0;
+    invalidReadingCount = 0;
+    currentState = NO_PLUG;
+    calibrationDone = false;
+}
+void resetLogicCutoff()
+{
+    Serial.println("Resetting Logic resetLogicCutof");
+    digitalWrite(S2_CTRL_PIN, LOW);
+    s2State = false;
+    staticVoltageDetected = false;
+    s2ActivateTime = 0;
+    staticVoltageDetectTime = 0;
+    invalidReadingCount = 0;
+    calibrationDone = false;
+}
+//
+// In adjustScalingFactor(), we now use the stored lastAdcReading (the last finished ADC reading)
+// for calibration instead of initiating a new ADC conversion immediately.
+//
+void adjustScalingFactor(float targetVoltage)
+{
+    // Use the current rawPeakVoltage as the ADC reading for calibration.
+    float adcValue = rawPeakVoltage;
+    Serial.print("Using Raw ADC Peak: ");
+    Serial.println(adcValue, 3);
+
+    if (adcValue > ADC_READING_VALIDATION_THRESHOLD && adcValue < ADC_READING_MAX_THRESHOLD)
+    {
+        // Calculate new scaling factor based on the target voltage and ADC reading.
+        float newScalingFactor = targetVoltage / adcValue;
+
+        // Optionally clamp the new scaling factor to an absolute range.
+        const float MIN_SCALING_FACTOR = 1.0;
+        const float MAX_SCALING_FACTOR = 20.0;
+        if (newScalingFactor < MIN_SCALING_FACTOR)
+            newScalingFactor = MIN_SCALING_FACTOR;
+        if (newScalingFactor > MAX_SCALING_FACTOR)
+            newScalingFactor = MAX_SCALING_FACTOR;
+
+        cpScalingFactor = newScalingFactor;
+        Serial.print("Scaling Factor set to: ");
+        Serial.print(cpScalingFactor, 3);
+        Serial.print(" (Target: ");
+        Serial.print(targetVoltage, 1);
+        Serial.print("V, ADC: ");
+        Serial.print(adcValue, 3);
+        Serial.println("V)");
+    }
+    else
+    {
+        Serial.print("Invalid ADC reading (");
+        Serial.print(adcValue, 3);
+        Serial.println("V), scaling factor NOT updated!");
+    }
+}
+
+bool validateReadings(float targetVoltage)
+{
+    float cpVoltage = convertAdcToCpVoltage(peakVoltage);
+    // Select tolerance based on the current state.
+    float tolerance = (currentState == VEHICLE_READY) ? CP_VOLTAGE_TOLERANCE_VEHICLE : CP_VOLTAGE_TOLERANCE_PLUG;
+    // For static voltage mode, only check voltage.
+    if (staticVoltageDetected)
+    {
+        return (cpVoltage >= targetVoltage - tolerance &&
+                cpVoltage <= targetVoltage + tolerance * 2);
+    }
+    // For PWM mode, check both frequency and voltage.
+    return ((frequency >= 900.0 && frequency <= 1100.0) &&
+            cpVoltage >= targetVoltage - tolerance &&
+            cpVoltage <= targetVoltage + tolerance * 2);
+}
+
+bool isPlugConnected()
+{
+    float rawVoltage = readVoltage();
+    float scaledVoltage = convertAdcToCpVoltage(rawVoltage);
+    // Modified to be more lenient with frequency detection.
+    bool validFrequency = (frequency >= 900.0 && frequency <= 1100.0);
+    bool validVoltage = (rawVoltage >= 1.5 && rawVoltage <= ADC_READING_MAX_THRESHOLD);
+    // Debug information when a plug is potentially detected.
+    if (validVoltage)
+    {
+        if (validFrequency)
+        {
+            printDebugInfo("Valid PWM signal detected: " + String(rawVoltage) + "V @ " + String(frequency) + "Hz");
+            return true;
+        }
+        else if (frequency < 10)
+        {
+            if (staticVoltageDetectTime == 0)
+            {
+                staticVoltageDetectTime = millis();
+                printDebugInfo("Potential static voltage detected, waiting to confirm");
+            }
+            else if (millis() - staticVoltageDetectTime > STATIC_VOLTAGE_TIMEOUT)
+            {
+                staticVoltageDetected = true;
+                printDebugInfo("Static voltage confirmed after timeout");
+                return true;
+            }
+        }
+    }
+    else if (frequency < 10)
+    {
+        staticVoltageDetectTime = 0;
+    }
+    return (validFrequency && validVoltage) || (staticVoltageDetected && validVoltage);
+}
+
+bool isStaticVoltagePresent()
+{
+    float rawVoltage = readVoltage();
+    bool validVoltage = (rawVoltage >= 1.5 && rawVoltage <= ADC_READING_MAX_THRESHOLD);
+    bool noFrequency = (frequency < 10.0);
+    return validVoltage && noFrequency;
+}
 float getBatteryVoltage()
 {
     float _batteryVoltage = batteryVoltage;
@@ -41,22 +254,19 @@ String getCPStatus(float voltage)
         return "D"; // With ventilation
     if (voltage >= -1.0 && voltage <= 1.0)
         return "E"; // No power (shut off)
-
     return "E";
 }
 // Convert ADC voltage to real CP voltage
 float convertAdcToCpVoltage(float adcVoltage)
 {
-    return adcVoltage * CP_SCALING_FACTOR;
+    return adcVoltage * cpScalingFactor;
 }
 
-// Read ADC voltage
 float readVoltage()
 {
-    int rawadc = analogRead(ADC_PIN);
-    return rawadc * (VREF / 4095.0); // 12-bit ADC conversion
+    lastAdcReading = analogRead(ADC_PIN) * (VREF / 4095.0);
+    return lastAdcReading;
 }
-
 // Interrupt handler for frequency measurement
 void IRAM_ATTR handleInterrupt()
 {
@@ -92,127 +302,76 @@ void resetCP()
     digitalWrite(S2_CTRL_PIN, LOW);
 }
 
-void initializeCP()
+void initializeHardware()
 {
+    Serial.begin(115200);
     pinMode(ADC_PIN, INPUT);
     analogSetAttenuation(ADC_11db);
     analogReadResolution(12);
-
     pinMode(FREQUENCY_PIN, INPUT);
     pinMode(S2_CTRL_PIN, OUTPUT);
     digitalWrite(S2_CTRL_PIN, LOW);
-
     attachInterrupt(digitalPinToInterrupt(FREQUENCY_PIN), handleInterrupt, CHANGE);
-
-    lastFrequencyUpdate = millis();
-    lastPeakReset = millis();
-
-    resetCP(); // Reset CP state on initialization
 }
-
-// Update and reset peak voltage
-float updatePeakVoltage()
+void updatePeakVoltage()
 {
+    static float currentPeak = 0.01;
     float voltage = readVoltage();
-
     if (voltage > currentPeak)
     {
         currentPeak = voltage;
     }
-
-    unsigned long currentTime = millis();
-    if (currentTime - lastPeakReset >= PEAK_INTERVAL)
+    if (millis() - lastPeakReset >= PEAK_INTERVAL)
     {
         peakVoltage = currentPeak;
-        currentPeak = 0.01; // Avoid zero reset issues
-        lastPeakReset = currentTime;
-
-        // Serial.print(F("Peak Analog Voltage: "));
-        // Serial.println(peakVoltage, 2);
-        // Serial.print(F("V | Converted CP Voltage: "));
-        // Serial.print(convertAdcToCpVoltage(peakVoltage), 2);
-        // Serial.println(F("V"));
+        rawPeakVoltage = currentPeak;
+        currentPeak = 0.01;
+        lastPeakReset = millis();
     }
-
-    return peakVoltage;
 }
-// Modified function: Calculate average voltage only when pulse is HIGH
-float updateAverageVoltage()
+
+void updateAverageVoltage()
 {
     static float voltageSum = 0.0;
-    static unsigned long sampleCount = 0;
-
-    // Baca nilai ADC
-    float voltage = readVoltage();
-    // Akumulasi hanya jika kondisi pulse HIGH
-    if (digitalRead(FREQUENCY_PIN) == HIGH)
+    static unsigned int sampleCount = 0;
+    if (compState)
     {
-        voltageSum += voltage;
+        voltageSum += readVoltage();
         sampleCount++;
     }
-
-    unsigned long currentTime = millis();
-    if (currentTime - lastPeakReset >= PEAK_INTERVAL)
+    if (millis() - lastAverageReset >= AVERAGE_INTERVAL)
     {
-        // Hitung nilai rata-rata
-        float averageVoltage = (sampleCount > 0) ? (voltageSum / sampleCount) : 0.0;
-        // Simpan hasil rata-rata ke variabel global (digunakan pada fungsi lain jika diperlukan)
-        peakVoltage = averageVoltage;
-
-        // Reset nilai untuk periode selanjutnya
+        averageVoltage = (sampleCount > 0) ? (voltageSum / sampleCount) : 0.0;
         voltageSum = 0.0;
-        lastPeakReset = currentTime;
-
-        Serial.print(F("sampleCount:"));
-        Serial.print(String(sampleCount));
         sampleCount = 0;
-        Serial.print(F(" | Average "));
-        Serial.print(PEAK_INTERVAL);
-        Serial.print(F(" ms: "));
-        Serial.print(averageVoltage, 2);
-        Serial.print(F(" V | Converted CP Voltage: "));
-        Serial.print(convertAdcToCpVoltage(averageVoltage), 2);
-        Serial.println(F(" V"));
+        lastAverageReset = millis();
     }
-    return peakVoltage;
 }
 
-// Update frequency and duty cycle calculations
 void updateFrequencyAndDutyCycle()
 {
-    unsigned long currentTime = millis();
-    if (currentTime - lastFrequencyUpdate >= UPDATE_INTERVAL)
+    if (millis() - lastFrequencyUpdate >= UPDATE_INTERVAL)
     {
-        frequency = pulseCount / (UPDATE_INTERVAL / 1000.0); // Correct frequency scaling
-
-        if (highTime + lowTime > 0)
+        noInterrupts();
+        unsigned long tempPulseCount = pulseCount;
+        unsigned long tempHighTime = highTime;
+        unsigned long tempLowTime = lowTime;
+        pulseCount = 0;
+        highTime = 0;
+        lowTime = 0;
+        interrupts();
+        frequency = tempPulseCount / (UPDATE_INTERVAL / 1000.0);
+        if (tempHighTime + tempLowTime > 0)
         {
-            dutyCycle = (static_cast<float>(highTime) / (highTime + lowTime)) * 100.0;
+            dutyCycle = (tempHighTime * 100.0) / (tempHighTime + tempLowTime);
         }
         else
         {
             dutyCycle = 0;
         }
-        pulseCount = 0;
-        highTime = lowTime = 0;
-        lastFrequencyUpdate = currentTime;
-        Serial.print(F("freq: "));
-        Serial.print(frequency);
-        Serial.print(F(" Hz | Duty: "));
-        Serial.print(dutyCycle, 1);
-        Serial.print(F("%"));
-        Serial.print(" | Peak: ");
-        Serial.print(String(peakVoltage, 2));
-        Serial.print("V | CP_V: ");
-        Serial.print(convertAdcToCpVoltage(peakVoltage), 1);
-        Serial.print("V | State: ");
-        Serial.print(getCPStatus(cpVoltage));
-        Serial.print(" | Max CC: ");
-        Serial.print(getMaxCurrent(dutyCycle));
-        Serial.println("A");
+        lastFrequencyUpdate = millis();
     }
 }
-
 // Handle serial commands
 void handleSerialCommands()
 {
