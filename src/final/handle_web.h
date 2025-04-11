@@ -117,6 +117,21 @@ void handleRoot()
   html += "    });";
   html += "}";
 
+  // Tambahkan fungsi JavaScript untuk toggle Cutoff (dalam bagian <script>)
+  html += "function toggleCutoff(checkbox) {";
+  html += "  fetch('/set?tgCutoff=' + checkbox.checked)";
+  html += "    .then(response => {";
+  html += "      if (!response.ok) {";
+  html += "        checkbox.checked = !checkbox.checked;";
+  html += "        alert('Failed to update Cutoff');";
+  html += "      }";
+  html += "    })";
+  html += "    .catch(error => {";
+  html += "      checkbox.checked = !checkbox.checked;";
+  html += "      console.error('Error:', error);";
+  html += "    });";
+  html += "}";
+
   html += "setInterval(updateData, 1000);";
   html += "</script>";
   html += "</head><body>";
@@ -191,10 +206,10 @@ void handleRoot()
   html += "<li><strong>Duty Cycle:</strong> <span id='cp-duty-cycle'>" + String(dutyCycle, 1) + "</span> %</li>";
   html += "<li><strong>CP volt:</strong> <span id='cp-duty-cycle'>" + String(convertAdcToCpVoltage(peakVoltage)) + "</span> V</li>";
   html += "<li><strong>EVSE State:</strong> <span id='cp-duty-cycle'>" + getCPStatus(convertAdcToCpVoltage(peakVoltage)) + "</span> V</li>";
-  html += "<li><strong>max evse 220 current:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrent(dutyCycle)) + "</span> A</li>";
-  html += "<li><strong>max current battery obc:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrentForObc()) + "</span> A</li>";
-  html += "<li><strong>watt obc continue:</strong> <span id='cp-duty-cycle'>" + String(getBatteryVoltage() * batteryCurrent) + "</span> W</li>";
+  html += "<li><strong>max current obc:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrentForObc()) + "</span> A</li>";
+  html += "<li><strong>watt obc:</strong> <span id='cp-duty-cycle'>" + String(getBatteryVoltage() * batteryCurrent) + "</span> W</li>";
   html += "<li><strong>max watt evse:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrent(dutyCycle) * 220) + "</span> W</li>";
+  html += "<li><strong>max current evse:</strong> <span id='cp-duty-cycle'>" + String(getMaxCurrent(dutyCycle)) + "</span> A</li>";
 
   // html += "<li><strong>max current evse:</strong> <span id='cp-duty-cycle'>" + String(getMaxWattEvse(dutyCycle)) + "</span> A</li>";
   html += "</ul>";
@@ -221,15 +236,14 @@ void handleRoot()
   html += "<div style='margin-bottom: 20px;'>";
 
   // First switch with improved layout
+  html += "<h5>RESTART TO TAKE EFFECT</h5>";
   html += "<div style='display: flex; align-items: center; margin-bottom: 12px;'>";
-  html += "<span style='flex: 1; font-size: 0.9em;'>charging on startup (only active if cp mode disabled):</span>";
+  html += "<span style='flex: 1; font-size: 0.9em;'>charging on startup:</span>";
   html += "<label class='switch' style='margin-left: 10px;'>";
   html += "<input type='checkbox' id='isActiveOnStartup' " + String(isActiveOnStartup ? "checked" : "") + " onchange='toggleSwitch(this)'>";
   html += "<span class='slider'></span>";
   html += "</label>";
   html += "</div>";
-
-  // Second switch with matching layout
   html += "<div style='display: flex; align-items: center; margin-bottom: 12px;'>";
   html += "<span style='flex: 1; font-size: 0.9em;'>CP Mode:</span>";
   html += "<label class='switch' style='margin-left: 10px;'>";
@@ -238,17 +252,22 @@ void handleRoot()
   html += "</label>";
   html += "</div>";
 
+  // ////////////////////
+  html += "<div style='display: flex; align-items: center; margin-bottom: 12px;'>";
+  html += "<span style='flex: 1; font-size: 0.9em;'>Cutoff current:</span>";
+  html += "<label class='switch' style='margin-left: 10px;'>";
+  html += "<input type='checkbox' id='tgCutoff' " + String(cutoffEnabled ? "checked" : "") + " onchange='toggleCutoff(this)'>";
+  html += "<span class='slider'></span>";
+  html += "</label>";
   html += "</div>";
-
-  // Keep the existing buttons
+  ////////////////////////////////
+  html += "</div>";
   html += "<div class='button-group'>";
   html += "<button onclick=\"location.href='/control?cmd=start'\">Start Charging</button>";
   html += "<button onclick=\"location.href='/control?cmd=stop'\">Stop Charging</button>";
   html += "<button onclick=\"location.href='/control?cmd=restart'\">Restart</button>";
   html += "</div>";
-
   html += "</div>";
-
   html += "</body></html>";
   server.send(200, "text/html", html);
 }
@@ -358,7 +377,24 @@ void handleSet()
       errorMsg += "Invalid modeCp value. ";
     }
   }
-
+  // Tambahkan penanganan untuk modeCp
+  if (server.hasArg("tgCutoff"))
+  {
+    String value = server.arg("tgCutoff");
+    if (value == "true" || value == "false")
+    {
+      cutoffEnabled = (value == "true");
+      preferences.putBool("tgCutoff", cpModeEnabled);
+      Serial.println("Updated tgCutoff: " + value);
+      Serial.print("Updated cutoffEnabled: ");
+      Serial.println(cutoffEnabled ? "true" : "false");
+    }
+    else
+    {
+      valid = false;
+      errorMsg += "Invalid modeCp value. ";
+    }
+  }
   if (!valid)
   {
     server.send(400, "text/plain", errorMsg);
@@ -382,6 +418,7 @@ void handleData()
   json += "\"targetCurrent\":" + String(targetCurrent, 1) + ",";
   json += "\"isActiveOnStartup\":" + String(isActiveOnStartup ? "true" : "false");
   json += "\"modeCp\":" + String(cpModeEnabled ? "true" : "false");
+  json += "\"tgCutoff\":" + String(cutoffEnabled ? "true" : "false");
   json += "}";
   server.send(200, "application/json", json);
 }

@@ -20,7 +20,7 @@ const uint8_t S2_CTRL_PIN = 12;   // S2 control pin
 // --- Constants ---
 const float VREF = 3.3;                      // ADC Reference voltage
 const float CP_SCALING_FACTOR_DEFAULT = 3.0; // Initial scaling factor (raw*3 ≈ 9.9V at full-scale)
-const unsigned long UPDATE_INTERVAL = 2000;  // Update interval (ms)
+const unsigned long UPDATE_INTERVAL = 3000;  // Update interval (ms)
 const unsigned long PEAK_INTERVAL = 2000;    // Peak voltage update interval (ms)
 const unsigned long AVERAGE_INTERVAL = 2000; // Average voltage update interval (ms)
 const unsigned long S2_DELAY = 5000;         // 5 seconds delay before auto vehicle ready
@@ -31,7 +31,7 @@ const float PLUG_CONNECTED_VOLTAGE = 9.0;    // Target scaled voltage when plug 
 const float VEHICLE_READY_VOLTAGE = 6.0;     // Target scaled voltage when vehicle ready
 
 // Frequency & ADC tolerances:
-const float FREQUENCY_TOLERANCE = 100;              // ±100Hz tolerance around 1kHz
+const float FREQUENCY_TOLERANCE = 800.0;            // ±800Hz tolerance around 1kHz;              // ±100Hz tolerance around 1kHz
 const float ADC_READING_VALIDATION_THRESHOLD = 0.1; // Minimum valid raw ADC voltage
 const float ADC_READING_MAX_THRESHOLD = 3.3;        // Maximum valid raw ADC voltage
 const unsigned int MAX_INVALID_READINGS = 5;        // Number of invalid readings before reset
@@ -141,16 +141,7 @@ float convertAdcToCpVoltage(float adcVoltage)
 
 float readVoltage()
 {
-    const int samples = 3;
-    float sum = 0.0;
-
-    for (int i = 0; i < samples; i++)
-    {
-        sum += analogRead(ADC_PIN) * (VREF / 4095.0);
-        delayMicroseconds(100);
-    }
-
-    return sum / samples;
+    return analogRead(ADC_PIN) * (VREF / 4095.0);
 }
 
 void IRAM_ATTR handleInterrupt()
@@ -504,7 +495,40 @@ bool isStaticVoltagePresent()
 
     return validVoltage && noFrequency;
 }
+void cpDetectStartup()
+{
+    lastFrequencyUpdate = millis();
+    lastPeakReset = millis();
+    lastAverageReset = millis();
+    lastStatusPrint = millis();
+    lastCPCheck = millis();
 
+    for (int i = 0; i < 5; i++)
+    {
+        updatePeakVoltage();
+        updateFrequencyAndDutyCycle();
+        delay(100);
+    }
+
+    if (frequency > 900.0 && frequency < 1100.0)
+    {
+        Serial.println("Plug already connected at startup (PWM detected).");
+        plugConnected = true;
+        currentState = PLUG_CONNECTED;
+        adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
+        s2ActivateTime = millis();
+    }
+    else if (readVoltage() >= 1.5)
+    {
+        Serial.println("Potential static voltage detected at startup.");
+        staticVoltageDetectTime = millis();
+    }
+    else
+    {
+        Serial.println("No plug detected at startup.");
+        currentState = NO_PLUG;
+    }
+}
 void processCP()
 {
     float cpVoltage = convertAdcToCpVoltage(peakVoltage);
@@ -619,37 +643,7 @@ void setup()
 
     delay(1000); // Allow time for stabilization
 
-    lastFrequencyUpdate = millis();
-    lastPeakReset = millis();
-    lastAverageReset = millis();
-    lastStatusPrint = millis();
-    lastCPCheck = millis();
-
-    for (int i = 0; i < 5; i++)
-    {
-        updatePeakVoltage();
-        updateFrequencyAndDutyCycle();
-        delay(100);
-    }
-
-    if (frequency > 900.0 && frequency < 1100.0)
-    {
-        Serial.println("Plug already connected at startup (PWM detected).");
-        plugConnected = true;
-        currentState = PLUG_CONNECTED;
-        adjustScalingFactor(PLUG_CONNECTED_VOLTAGE);
-        s2ActivateTime = millis();
-    }
-    else if (readVoltage() >= 1.5)
-    {
-        Serial.println("Potential static voltage detected at startup.");
-        staticVoltageDetectTime = millis();
-    }
-    else
-    {
-        Serial.println("No plug detected at startup.");
-        currentState = NO_PLUG;
-    }
+    cpDetectStartup();
 }
 
 void loop()

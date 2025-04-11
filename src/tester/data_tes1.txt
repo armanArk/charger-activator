@@ -1,0 +1,51 @@
+DATA TEST=; PLUG, WAIT DELAY 5S, THAN RFID
+
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 0.010V | Scaled Peak: 0.03V | State: E | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 0.010V | Scaled Peak: 0.03V | State: E | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+---------- DEBUG INFO ----------
+Potential static voltage detected, waiting to confirm
+Raw ADC Peak: 2.830V | Scaled Peak: 8.49V | Current ADC: 2.637V | Frequency: 3.0Hz | Scaling Factor: 3.000
+-------------------------------
+Freq: 3.0Hz | DC: 3.5% | Raw ADC Peak: 2.830V | Scaled Peak: 8.49V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 3.0Hz | DC: 3.5% | Raw ADC Peak: 2.900V | Scaled Peak: 8.70V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.8Hz | DC: 58.3% | Raw ADC Peak: 2.933V | Scaled Peak: 8.80V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.8Hz | DC: 58.3% | Raw ADC Peak: 2.894V | Scaled Peak: 8.68V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.967V | Scaled Peak: 8.90V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.895V | Scaled Peak: 8.69V | State: B | S2: OFF | cp_factor: 3.000 | CP_State: NO_PLUG
+------------------------------------------------------------- DEBUG INFO -------------------------------------------------------------------------
+Static voltage confirmed after timeout
+Raw ADC Peak: 2.899V | Scaled Peak: 8.70V | Current ADC: 2.663V | Frequency: 0.0Hz | Scaling Factor: 3.000
+-------------------------------
+---------- DEBUG INFO ----------
+Plug Connected, transitioning to PLUG_CONNECTED state
+Raw ADC Peak: 2.899V | Scaled Peak: 8.70V | Current ADC: 2.642V | Frequency: 0.0Hz | Scaling Factor: 3.000
+-------------------------------
+Raw ADC Value: 2.683
+Scaling Factor set to: 3.392 (Target: 9.0V, Avg ADC: 2.653V)
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.899V | Scaled Peak: 9.83V | State: B | S2: OFF | cp_factor: 3.392 | CP_State: PLUG_CONNECTED [STATIC]
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.893V | Scaled Peak: 9.81V | State: B | S2: OFF | cp_factor: 3.392 | CP_State: PLUG_CONNECTED [STATIC]
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.998V | Scaled Peak: 10.17V | State: B | S2: OFF | cp_factor: 3.392 | CP_State: PLUG_CONNECTED [STATIC]
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.948V | Scaled Peak: 10.00V | State: B | S2: OFF | cp_factor: 3.392 | CP_State: PLUG_CONNECTED [STATIC]
+---------- DEBUG INFO ----------
+Auto transitioning to VEHICLE_READY state after delay
+Raw ADC Peak: 2.940V | Scaled Peak: 9.97V | Current ADC: 2.688V | Frequency: 0.0Hz | Scaling Factor: 3.392
+-------------------------------
+Raw ADC Value: 1.546
+Scaling Factor set to: 3.932 (Target: 6.0V, Avg ADC: 1.526V)
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.940V | Scaled Peak: 11.56V | State: A | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 0.0Hz | DC: 0.0% | Raw ADC Peak: 2.881V | Scaled Peak: 11.33V | State: A | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 630.2Hz | DC: 95.1% | Raw ADC Peak: 1.902V | Scaled Peak: 7.48V | State: C | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 630.2Hz | DC: 95.1% | Raw ADC Peak: 2.138V | Scaled Peak: 8.41V | State: B | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1000.0Hz | DC: 53.7% | Raw ADC Peak: 1.850V | Scaled Peak: 7.27V | State: C | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1000.0Hz | DC: 53.7% | Raw ADC Peak: 1.831V | Scaled Peak: 7.20V | State: C | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1013.7Hz | DC: 53.6% | Raw ADC Peak: 2.108V | Scaled Peak: 8.29V | State: B | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1013.7Hz | DC: 53.6% | Raw ADC Peak: 2.231V | Scaled Peak: 8.77V | State: B | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1029.5Hz | DC: 53.8% | Raw ADC Peak: 1.935V | Scaled Peak: 7.61V | State: C | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1029.5Hz | DC: 53.8% | Raw ADC Peak: 1.910V | Scaled Peak: 7.51V | State: C | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+---------- DEBUG INFO ----------
+Invalid reading in VEHICLE_READY state (1/5)
+Raw ADC Peak: 2.423V | Scaled Peak: 9.53V | Current ADC: 1.010V | Frequency: 1030.7Hz | Scaling Factor: 3.932
+-------------------------------
+Freq: 1030.7Hz | DC: 53.8% | Raw ADC Peak: 2.423V | Scaled Peak: 9.53V | State: B | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1030.7Hz | DC: 53.8% | Raw ADC Peak: 2.115V | Scaled Peak: 8.31V | State: B | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
+Freq: 1037.2Hz | DC: 53.8% | Raw ADC Peak: 1.819V | Scaled Peak: 7.15V | State: C | S2: ON | cp_factor: 3.932 | CP_State: VEHICLE_READY [STATIC]
