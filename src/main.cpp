@@ -6,4 +6,4 @@
 // #include "initiate_cp.h"
 // #include "test_analog.h"
 // #include "tester/tes_canbus.h"
-#include "final/web_based_and_cp.h"
+#include "final/main.h"

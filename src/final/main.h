@@ -52,6 +52,7 @@ bool chargingObcState = false; // OBC charging state
 bool vehicleReadyState = false;
 bool vehicleReadyStateCleared = false; // Track if it has been cleared
 bool hasStartedCharging = false;
+unsigned long previousMillis = 0; // Tracks the last time the current toggled
 
 // --- Constants ---
 const float VREF = 3.3;                       // ADC Reference voltage
@@ -103,7 +104,8 @@ const float ADC_READING_MAX_THRESHOLD = 3.3;        // Maximum valid raw ADC vol
 const unsigned int MAX_INVALID_READINGS = 5;        // Number of invalid readings before reset
 const unsigned long STATIC_VOLTAGE_TIMEOUT = 10000; // Time to wait for PWM before accepting static voltage
 
-volatile bool compState = false; // Captures comparator (FREQUENCY_PIN) state
+// Captures comparator (FREQUENCY_PIN) state
+volatile bool compState = false;
 unsigned long lastAverageReset = 0;
 unsigned long lastStatusPrint = 0;
 unsigned long lastCPCheck = 0;
@@ -111,7 +113,8 @@ unsigned long s2ActivateTime = 0;          // Time when plug connection was dete
 unsigned long staticVoltageDetectTime = 0; // Time when static voltage was first detected
 unsigned long plugDetectionTime = 0;       // Time when plug was first detected (for calibration delay)
 
-float rawPeakVoltage = 0.01; // Raw ADC peak (for debugging)
+// Raw ADC peak (for debugging)
+float rawPeakVoltage = 0.01;
 float averageVoltage = 0.0;
 float cpScalingFactor = CP_SCALING_FACTOR_DEFAULT; // Auto scaling factor
 
@@ -176,6 +179,20 @@ bool communicationTimeout = false;
 bool isActiveOnStartup = false;
 bool cpModeEnabled = true;  // Track CP mode state
 bool cutoffEnabled = false; // Track CP mode state
+bool mode_cc = 0;
+bool simulate, simulate_cc;
+float cutoffCheckCurrent; // Variable to determine the current value for cutoff check
+static bool isHigh = true;
+
+#define WEB_PORTAL_ENABLE 1
+// BLINK ON
+int ON_DELAY_CC = 4000;
+// BLINK OFF
+int OFF_DELAY_CC = 4000;
+// LOW LEVEL CURRENT (LOW STAGE BLINK)
+float LV_LOW_CURRENT_CC = 0.5;
+// blink charge cutoff level current
+float lowCurrentCCEnabled = 5;
 
 #include "final/handle_canbus.h"
 #include "final/handle_web.h"
@@ -234,15 +251,20 @@ void periodicTask(void *pvParameters)
     {
         unsigned long currentTime = millis();
         // Execute tasks every 1000 ms
-        if (currentTime - lastTime >= 4000)
+        if (currentTime - lastTime >= 1000)
         {
             lastTime = currentTime;
-            uptime = millis() / 4000;
+            uptime = millis() / 1000;
             // CP Mode Logic
             if (cpModeEnabled)
             {
                 float cpVoltage = convertAdcToCpVoltage(peakVoltage);
                 float currentRawVoltage = readVoltage();
+
+                if (simulate)
+                {
+                    currentState = VEHICLE_READY;
+                }
 
                 // *** AUTO CONNECT LOGIC ***
                 // Force plug detection if a valid PWM signal is detected and plugConnected is false.
@@ -265,7 +287,7 @@ void periodicTask(void *pvParameters)
                 }
 
                 // --- NO_PLUG: If scaled voltage is very low and frequency is near zero.
-                if (cpVoltage < NO_PLUG_VOLTAGE_THRESHOLD && frequency < 10 && !staticVoltageDetected)
+                if (cpVoltage < NO_PLUG_VOLTAGE_THRESHOLD && frequency < 10 && !staticVoltageDetected && !simulate)
                 {
                     if (currentState != NO_PLUG)
                     {
@@ -308,7 +330,6 @@ void periodicTask(void *pvParameters)
                     // --- Transition from PLUG_CONNECTED to VEHICLE_READY ---
                     else if (currentState == PLUG_CONNECTED && !s2State && (millis() - s2ActivateTime >= S2_DELAY))
                     {
-
                         if ((frequency >= 900.0 && frequency <= 1100.0) ||
                             (staticVoltageDetected && currentRawVoltage >= 1.5))
                         {
@@ -327,20 +348,139 @@ void periodicTask(void *pvParameters)
                     }
                     else if (currentState == VEHICLE_READY)
                     {
-                        if (validateReadings(VEHICLE_READY_VOLTAGE))
+                        if (validateReadings(VEHICLE_READY_VOLTAGE) || simulate)
                         {
+                            // Log when vehicle readiness is validated
+                            Serial.print("[");
+                            Serial.print(millis());
+                            Serial.println("] Vehicle readiness validated.");
                             invalidReadingCount = 0;
                             if (millis() - lastCPCheck >= 10000)
                             {
                                 printDebugInfo("Vehicle Ready confirmed, S2 is ON");
                                 lastCPCheck = millis();
                             }
-                            float adjustedCurrent = min(targetCurrent, getMaxCurrentForObc());
-                            sendChargerCommand(targetVoltage, adjustedCurrent, true);
-                            // --- CUTOFF CURRENT LOGIC (only in CP mode) ---
-                            // Check if the charging current (batteryCurrent) is below cutoffCurrent.
 
-                            if (batteryCurrent <= cutoffCurrent)
+                            // Logic to enable mode_cc based on sustained low current
+                            static bool checkingLowCurrent = false;
+                            static unsigned long lowCurrentStartTime = 0;
+                            static bool mode_cc_enabled = false;
+                            const unsigned long delayToEnableCC = 10000; // 10 seconds, adjustable
+
+                            if (batteryCurrent <= lowCurrentCCEnabled & mode_cc)
+                            {
+                                if (!checkingLowCurrent)
+                                {
+                                    checkingLowCurrent = true;
+                                    lowCurrentStartTime = millis();
+                                    Serial.print("[");
+                                    Serial.print(millis());
+                                    Serial.println("] Starting to check for low current to enable mode_cc.");
+                                }
+                                else if (millis() - lowCurrentStartTime >= delayToEnableCC)
+                                {
+                                    mode_cc_enabled = true;
+                                    checkingLowCurrent = false;
+                                    Serial.print("[");
+                                    Serial.print(millis());
+                                    Serial.println("] mode_cc enabled due to sustained low current.");
+                                }
+                            }
+                            else
+                            {
+                                if (checkingLowCurrent)
+                                {
+                                    mode_cc_enabled = false;
+                                    Serial.print("[");
+                                    Serial.print(millis());
+                                    Serial.println("] Current recovered above lowCurrentCCEnabled, resetting check.");
+                                }
+                                checkingLowCurrent = false;
+                            }
+
+                            float adjustedCurrent = min(targetCurrent, getMaxCurrentForObc());
+                            float currentToSend;
+                            if (mode_cc_enabled)
+                            {
+                                static unsigned long lastToggleTime = 0; // Time of last toggle
+                                isHigh = true;                           // State: true = high (adjustedCurrent), false = low (LV_LOW_CURRENT_CC)
+                                if (millis() - lastToggleTime >= ON_DELAY_CC)
+                                {
+                                    isHigh = !isHigh;          // Toggle between high and low
+                                    lastToggleTime = millis(); // Update toggle time
+                                    // Log current toggle state
+                                    Serial.print("[");
+                                    Serial.print(millis());
+                                    Serial.print("] Toggling current to ");
+                                    Serial.println(isHigh ? "high" : "low");
+                                }
+                                currentToSend = isHigh ? adjustedCurrent : LV_LOW_CURRENT_CC; // Set current based on state
+                            }
+                            else
+                            {
+                                currentToSend = adjustedCurrent; // Use fixed current when mode_cc is false
+                            }
+                            sendChargerCommand(targetVoltage, currentToSend, true); // Send command with selected current
+                            // --- Simulation of Blinking batteryCurrent for Testing Cutoff ---
+                            if (simulate_cc)
+                            {
+                                // Log the simulated current for debugging
+                                Serial.print("[");
+                                Serial.print(currentTime);
+                                Serial.print("] Simulated batteryCurrent = ");
+                                Serial.println(batteryCurrent);
+
+                                // Toggle current based on timing intervals
+                                if (isHigh && (currentTime - previousMillis >= ON_DELAY_CC))
+                                {
+                                    // Switch from high to low current after ON_DELAY_CC
+                                    batteryCurrent = LV_LOW_CURRENT_CC;
+                                    isHigh = false;
+                                    previousMillis = currentTime; // Reset the timer
+                                }
+                                else if (!isHigh && (currentTime - previousMillis >= OFF_DELAY_CC))
+                                {
+                                    // Switch from low to high current after OFF_DELAY_CC
+                                    batteryCurrent = currentToSend;
+                                    isHigh = true;
+                                    previousMillis = currentTime; // Reset the timer
+                                }
+                            }
+                            // --- Modified Cutoff Current Logic ---
+
+                            if (mode_cc_enabled)
+                            {
+                                // Track the maximum battery current over a period covering a full blinking cycle
+                                static float maxBatteryCurrent = 0.0;
+                                static unsigned long lastResetTime = 0;
+                                if (millis() - lastResetTime >= 2 * ON_DELAY_CC)
+                                {
+                                    maxBatteryCurrent = batteryCurrent; // Reset to current value at end of window
+                                    lastResetTime = millis();
+                                }
+                                else if (batteryCurrent > maxBatteryCurrent)
+                                {
+                                    maxBatteryCurrent = batteryCurrent; // Update if higher current is observed
+                                }
+                                cutoffCheckCurrent = maxBatteryCurrent; // Use peak current for cutoff check in mode_cc
+                                // Log the cutoff check value when mode_cc is true
+                                // Serial.print("[");
+                                // Serial.print(millis());
+                                // Serial.print("] mode_cc true, using maxBatteryCurrent = ");
+                                Serial.println(maxBatteryCurrent);
+                            }
+                            else
+                            {
+                                // Use instantaneous current when mode_cc is false
+                                cutoffCheckCurrent = cutoffCurrent;
+                                // Serial.print("[");
+                                // Serial.print(millis());
+                                // Serial.print("] mode_cc false, using batteryCurrent = ");
+                                // Serial.println(batteryCurrent);
+                            }
+
+                            // Check if the selected current (cutoffCheckCurrent) is below cutoffCurrent
+                            if (cutoffCheckCurrent < cutoffCurrent)
                             {
                                 if (cutoffEnabled)
                                 {
@@ -348,14 +488,23 @@ void periodicTask(void *pvParameters)
                                     {
                                         checkingCutoff = true;
                                         cutoffStartTime = millis();
-                                        Serial.println("Cutoff: Low current detected, starting timer...");
+
+                                        // Log when the cutoff timer starts
+                                        // Serial.print("[");
+                                        // Serial.print(millis());
+                                        // Serial.println("] Cutoff timer started.");
                                     }
                                     else if (millis() - cutoffStartTime >= delayCutoff)
                                     {
                                         cutoffTriggered = true;
-                                        stopCharger(); // This stops charging immediately.
-                                        Serial.println("Charging stopped due to current cutoff");
-                                        // Skip further processing in this iteration.
+                                        stopCharger(); // This stops charging immediately
+
+                                        // Log when charging stops due to cutoff
+                                        // Serial.print("[");
+                                        // Serial.print(millis());
+                                        // Serial.println("] Charging stopped due to current cutoff.");
+
+                                        // Skip further processing in this iteration
                                         resetLogicCutoff();
                                         vTaskDelay(10 / portTICK_PERIOD_MS);
                                         continue;
@@ -364,30 +513,16 @@ void periodicTask(void *pvParameters)
                             }
                             else
                             {
-                                // If current has recovered above the cutoff threshold, reset the cutoff timer.
+                                // If current has recovered above the cutoff threshold, reset the cutoff timer
                                 if (checkingCutoff)
                                 {
-                                    Serial.println("Cutoff: Current recovered, resetting cutoff timer");
+                                    // Log when current recovers and cutoff timer is reset
+                                    // Serial.print("[");
+                                    // Serial.print(millis());
+                                    // Serial.println("] Cutoff: Current recovered, resetting cutoff timer.");
                                 }
                                 checkingCutoff = false;
                                 cutoffStartTime = millis(); // Optional: reset timer
-                            }
-                        }
-                        else if (cpVoltage < NO_PLUG_VOLTAGE_THRESHOLD && frequency < 10 && !staticVoltageDetected)
-                        {
-                            printDebugInfo("Vehicle disconnected from VEHICLE_READY state");
-                            resetLogic();
-                        }
-                        else
-                        {
-                            invalidReadingCount++;
-                            printDebugInfo("Invalid reading in VEHICLE_READY state (" +
-                                           String(invalidReadingCount) + "/" +
-                                           String(MAX_INVALID_READINGS) + ")");
-                            if (invalidReadingCount >= MAX_INVALID_READINGS)
-                            {
-                                printDebugInfo("Too many invalid readings, resetting...");
-                                resetLogic();
                             }
                         }
                     }
@@ -487,17 +622,20 @@ void setup()
     Serial.println(cutoffEnabled);
     Serial.print("==================================================");
 
-    // Initialize WiFi in Access Point mode
-    WiFi.softAP(ssid, password);
-    Serial.print("AP IP address: ");
-    Serial.println(WiFi.softAPIP());
+    if (WEB_PORTAL_ENABLE)
+    {
+        // Initialize WiFi in Access Point mode
+        WiFi.softAP(ssid, password);
+        Serial.print("AP IP address: ");
+        Serial.println(WiFi.softAPIP());
 
-    // Set up web server routes
-    server.on("/", handleRoot);
-    server.on("/set", handleSet);
-    server.on("/control", handleControl);
-    server.on("/data", handleData);
-    server.begin();
+        // Set up web server routes
+        server.on("/", handleRoot);
+        server.on("/set", handleSet);
+        server.on("/control", handleControl);
+        server.on("/data", handleData);
+        server.begin();
+    }
 
     startCharger();
     // Create RTOS tasks

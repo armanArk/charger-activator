@@ -56,7 +56,7 @@ void stopChargerCommand()
     if (sndStat == CAN_OK)
     {
         Serial.println("Stop command sent. Charging stopped");
-        cutoffTriggered = true; // Set cutoff flag
+        isCutoffTriggered = true; // Set cutoff flag
         chargingStatusText = "Stopped";
     }
     else
@@ -141,7 +141,7 @@ void simulateCanbus(float _batteryVoltage, float _batteryCurrent, bool _state)
             else if ((millis() - cutoffStartTime) >= delayCutoff)
             { // If low current last more than delay, stop charging
                 stopCharger();
-                cutoffTriggered = true;
+                isCutoffTriggered = true;
                 chargingStatusText = "CutOff";
             }
         }

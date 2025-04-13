@@ -63,7 +63,7 @@ String chargingStatusText = "Stopped";     // Charging status text for display
 float cutoffCurrent = 4.0;                 // Default cutoff current
 unsigned long cutoffStartTime = 0;         // Timer for cutoff
 bool checkingCutoff = false;               // Flag for cutoff checking
-bool cutoffTriggered = false;              // Flag to indicate that cutoff has occurred
+bool isCutoffTriggered = false;            // Flag to indicate that cutoff has occurred
 const unsigned long delayCutoff = 30000;   //  30 seconds
 unsigned long uptime;
 bool chargingObcState = false;
@@ -167,7 +167,7 @@ void loop()
   handleReceivingCanbus(); // Check for incoming CAN messages
 
   // Cutoff logic (Corrected)
-  if (chargerActive && !cutoffTriggered)
+  if (chargerActive && !isCutoffTriggered)
   {
     // if (batteryCurrent < cutoffCurrent)
     // {
@@ -183,7 +183,7 @@ void loop()
     //   {
     //     // Trigger the cutoff
     //     stopCharger();
-    //     cutoffTriggered = true;
+    //     isCutoffTriggered = true;
     //     chargingStatusText = "cutoff current";
     //     Serial.println("=====================================");
     //     Serial.println("Cutoff Triggered after continuous!");
@@ -223,7 +223,7 @@ void startCharger()
 {
   chargerActive = true;
   checkingCutoff = false;
-  cutoffTriggered = false; // Reset the cutoff flag when charging starts
+  isCutoffTriggered = false; // Reset the cutoff flag when charging starts
   chargingStatusText = "Charging";
   Serial.println("Charger started");
 }
@@ -233,7 +233,7 @@ void stopCharger()
   chargerActive = false;
   stopChargerCommand();
   checkingCutoff = false;
-  cutoffTriggered = false; // Clear any previous cutoff trigger
+  isCutoffTriggered = false; // Clear any previous cutoff trigger
   chargingStatusText = "Stopped";
   Serial.println("Charger stopped");
 }

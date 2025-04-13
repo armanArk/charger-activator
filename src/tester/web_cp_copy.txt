@@ -42,7 +42,7 @@ String chargingStatusText = "Stopped";     // Status text for display
 float cutoffCurrent = 4.0;                 // Default cutoff current
 unsigned long cutoffStartTime = 0;         // Timer for cutoff
 bool checkingCutoff = false;               // Flag for cutoff monitoring
-bool cutoffTriggered = false;              // Flag to indicate that cutoff has occurred
+bool isCutoffTriggered = false;              // Flag to indicate that cutoff has occurred
 const unsigned long delayCutoff = 30000;   // 30 seconds delay for cutoff
 unsigned long uptime = 0;                  // System uptime (seconds)
 bool chargingObcState = false;             // OBC charging state
@@ -163,7 +163,7 @@ void startCharger()
 {
     chargerActive = true;
     checkingCutoff = false;
-    cutoffTriggered = false; // Reset cutoff flag when charging starts
+    isCutoffTriggered = false; // Reset cutoff flag when charging starts
     chargingStatusText = "Charging";
     Serial.println("Charger started");
 }
@@ -173,7 +173,7 @@ void stopCharger()
     chargerActive = false;
     stopChargerCommand();
     checkingCutoff = false;
-    cutoffTriggered = false;
+    isCutoffTriggered = false;
     chargingStatusText = "Stopped";
     Serial.println("Charger stopped");
 }
@@ -282,7 +282,7 @@ void periodicTask(void *pvParameters)
             }
 
             // Cutoff Logic (hanya untuk non-CP mode)
-            // if (!cpModeEnabled && chargerActive && !cutoffTriggered && !communicationTimeout)
+            // if (!cpModeEnabled && chargerActive && !isCutoffTriggered && !communicationTimeout)
             // {
             //     if (batteryCurrent <= cutoffCurrent)
             //     {
@@ -293,7 +293,7 @@ void periodicTask(void *pvParameters)
             //         }
             //         else if (millis() - cutoffStartTime >= delayCutoff)
             //         {
-            //             cutoffTriggered = true;
+            //             isCutoffTriggered = true;
             //             stopCharger();
             //             Serial.println("Charging stopped due to current cutoff");
             //         }

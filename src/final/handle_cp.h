@@ -10,14 +10,10 @@ void printSystemStatus()
         Serial.print(String(rawPeakVoltage, 3));
         Serial.print("V | Scaled Peak: ");
         Serial.print(convertAdcToCpVoltage(peakVoltage), 2);
-        Serial.print("V | State: ");
-        Serial.print(getCPStatus(convertAdcToCpVoltage(peakVoltage)));
-        Serial.print(" | S2: ");
+        Serial.print("V | S2: ");
         Serial.print(digitalRead(S2_CTRL_PIN) ? "ON" : "OFF");
         Serial.print(" | cp_factor: ");
         Serial.print(String(cpScalingFactor, 3));
-        Serial.print(" | curr: ");
-        Serial.print(String(getMaxCurrent(dutyCycle)) + " A");
         Serial.print(" | CP_State: ");
 
         switch (currentState)
@@ -33,8 +29,22 @@ void printSystemStatus()
             break;
         }
         Serial.print(staticVoltageDetected ? " [STATIC]" : "");
-        Serial.print(" | cutoffTrg:");
-        Serial.println(cutoffTriggered);
+        Serial.print(" | curObc: ");
+        Serial.print(String(getMaxCurrentForObc()) + " A");
+        Serial.print(" | modeCC:");
+        Serial.print(String(mode_cc));
+        Serial.print(" | cutofCek:");
+        Serial.print(String(cutoffCheckCurrent));
+        Serial.print(" | cutOfCur:");
+        Serial.print(String(cutoffCurrent));
+        Serial.print(" | batCur:");
+        Serial.print(String(batteryCurrent));
+        Serial.print(" | ctoffEn:");
+        Serial.print(String(cutoffTriggered));
+        Serial.print(" | blinkCur:");
+        Serial.print(String(isHigh));
+        Serial.print(" | lowCCcur:");
+        Serial.println(String(lowCurrentCCEnabled));
         lastStatusPrint = millis();
     }
 }
@@ -288,7 +298,6 @@ void IRAM_ATTR handleInterrupt()
     lastEdgeTime = currentTime;
 }
 
-// Initialize hardware
 void resetCP()
 {
     // Reset all CP-related variables
@@ -374,38 +383,26 @@ void updateFrequencyAndDutyCycle()
         lastFrequencyUpdate = millis();
     }
 }
-// Handle serial commands
-// void handleSerialCommands()
-// {
-//     if (Serial.available() > 0)
-//     {
-//         char cmd = Serial.read();
-//         switch (cmd)
-//         {
-//         case 'c':
-//             digitalWrite(S2_CTRL_PIN, HIGH);
-//             Serial.println(F("Control: HIGH"));
-//             break;
-//         case 'b':
-//             digitalWrite(S2_CTRL_PIN, LOW);
-//             Serial.println(F("Control: LOW"));
-//             break;
-//         default:
-//             break;
-//         }
-//     }
-// }
 void handleSerialCommands()
 {
     static char dat[2548];   // Buffer for incoming data
     static int datIndex = 0; // Buffer index (preserved across calls)
     static const char key_set_charger[] = "WRITE_SET_CHARGER";
-    static const char key_set_on_delay[] = "WRITE_ON_DELAY";
-    static const char key_set_off_delay[] = "WRITE_OFF_DELAY";
+    static const char key_set_on_delay_cc[] = "WRITE_ON_DELAY_CC";
+    static const char key_set_off_delay_cc[] = "WRITE_OFF_DELAY_CC";
+    static const char key_set_low_current[] = "WRITE_SET_LOW_CURRENT";
+    static const char key_set_mode_cc[] = "WRITE_SET_CC";
+    static const char key_set_bat_cur[] = "WRITE_BAT_CUR";
+    static const char key_set_bat_v[] = "WRITE_BAT_V";
+    static const char key_enable_simulate_cc[] = "WRITE_SIMULATE_CC";
+    static const char key_restart[] = "WRITE_RESTART";
 
     while (Serial.available() > 0)
     {
         char incomingChar = Serial.read();
+
+        Serial.print("Received: ");
+        Serial.println(dat);
 
         // Only store if we have space (reserve last byte for the null terminator)
         if (datIndex < sizeof(dat) - 1)
@@ -424,27 +421,63 @@ void handleSerialCommands()
                 memset(dat, 0, sizeof(dat));
                 continue;
             }
-
             // Replace the newline with a null terminator to end the C-string
             dat[datIndex - 1] = '\0';
-
             // Check for specific keys and act accordingly
             if (keyExists(dat, key_set_charger))
             {
-                Serial.println("key_set_charger");
-                currentState == VEHICLE_READY;
+                bool setch = String(getValueKey(dat, key_set_charger)).toInt();
+                simulate = setch;
+                if (setch)
+                {
+                    Serial.println("key_set_charger");
+                    digitalWrite(S2_CTRL_PIN, HIGH);
+                    s2State = true;
+                    currentState = VEHICLE_READY;
+                    printDebugInfo("Manual S2 Activation");
+                    adjustScalingFactor(VEHICLE_READY_VOLTAGE);
+                }
             }
-
-            // Check for specific keys and act accordingly
-            if (keyExists(dat, key_set_on_delay))
+            if (keyExists(dat, key_restart))
             {
-                Serial.println("key_set_on_delay");
+                ESP.restart();
             }
-
             // Check for specific keys and act accordingly
-            if (keyExists(dat, key_set_off_delay))
+            if (keyExists(dat, key_set_off_delay_cc))
             {
-                Serial.println("key_set_off_delay");
+                OFF_DELAY_CC = String(getValueKey(dat, key_set_off_delay_cc)).toInt();
+                Serial.println("key_set_off_delay_cc");
+            }
+            // Check for specific keys and act accordingly
+            if (keyExists(dat, key_set_low_current))
+            {
+                LV_LOW_CURRENT_CC = String(getValueKey(dat, key_set_low_current)).toFloat();
+                Serial.println("key_set_low_current = " + String(LV_LOW_CURRENT_CC));
+            }
+            // Check for specific keys and act accordingly
+            if (keyExists(dat, key_set_mode_cc))
+            {
+
+                mode_cc = String(getValueKey(dat, key_set_mode_cc)).toInt();
+                Serial.println("key_set_mode_cc = " + String(mode_cc));
+            }
+            // Check for specific keys and act accordingly
+            if (keyExists(dat, key_set_bat_v))
+            {
+                batteryVoltage = String(getValueKey(dat, key_set_bat_v)).toFloat();
+                Serial.println("key_set_bat_v = " + String(batteryVoltage));
+            }
+            // Check for specific keys and act accordingly
+            if (keyExists(dat, key_set_bat_cur))
+            {
+                batteryCurrent = String(getValueKey(dat, key_set_bat_cur)).toFloat();
+                Serial.println("key_set_bat_cur = " + String(batteryCurrent));
+            }
+            // Check for specific keys and act accordingly
+            if (keyExists(dat, key_enable_simulate_cc))
+            {
+                simulate_cc = String(getValueKey(dat, key_enable_simulate_cc)).toInt();
+                Serial.println("key_enable_simulate_cc = " + String(simulate_cc));
             }
 
             // Clear the buffer for the next message
