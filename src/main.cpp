@@ -6,4 +6,4 @@
 // #include "initiate_cp.h"
 // #include "test_analog.h"
 // #include "tester/tes_canbus.h"
-#include "final/main.h"
+#include "final/final.h"

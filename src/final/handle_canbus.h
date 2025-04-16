@@ -232,11 +232,11 @@ void printDecodeDataObc()
     Serial.println("=================================================");
     Serial.print("Battery Voltage: ");
     Serial.print(batteryVoltage);
-    Serial.println(" V");
+    Serial.print(" V");
 
     Serial.print("Battery Current: ");
     Serial.print(batteryCurrent);
-    Serial.println(" A");
+    Serial.print(" A");
 
     Serial.print("Hardware Failure: ");
     Serial.println(hardwareFailure ? "Yes" : "No");

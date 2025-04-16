@@ -33,18 +33,18 @@ void printSystemStatus()
         Serial.print(String(getMaxCurrentForObc()) + " A");
         Serial.print(" | modeCC:");
         Serial.print(String(mode_cc));
-        Serial.print(" | cutofCek:");
-        Serial.print(String(cutoffCheckCurrent));
-        Serial.print(" | cutOfCur:");
-        Serial.print(String(cutoffCurrent));
-        Serial.print(" | batCur:");
-        Serial.print(String(batteryCurrent));
-        Serial.print(" | ctoffEn:");
-        Serial.print(String(cutoffTriggered));
         Serial.print(" | blinkCur:");
         Serial.print(String(isHigh));
-        Serial.print(" | lowCCcur:");
-        Serial.println(String(lowCurrentCCEnabled));
+        Serial.print(" | ctoffEn:");
+        Serial.print(String(cutoffTriggered));
+        Serial.print(" | cutofCek:");
+        Serial.print(String(cutoffCheckCurrent));
+        Serial.print(" | batCur:");
+        Serial.print(String(batteryCurrent));
+        Serial.print(" | trigCCcur:");
+        Serial.print(String(lowCurrentCCEnabled));
+        Serial.print(" | cutOffCur:");
+        Serial.println(String(cutoffCurrent));
         lastStatusPrint = millis();
     }
 }

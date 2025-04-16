@@ -39,7 +39,7 @@ const float MAX_ALLOWED_CURRENT = 16;                       // Maximum allowed c
 unsigned long pmillis = 0;                 // For timing periodic operations
 unsigned long cutoffStartTime = 0;         // Timer for cutoff
 unsigned long uptime = 0;                  // System uptime (seconds)
-const unsigned long delayCutoff = 30000;   // 30 seconds delay for cutoff
+const unsigned long delayCutoff = 10000;   // 30 seconds delay for cutoff
 float targetVoltage = MAX_ALLOWED_VOLTAGE; // Default target voltage
 float targetCurrent = 6;                   // Default target current
 bool chargerActive = false;                // Charging flag (true = charging, false = stopped)
@@ -184,7 +184,8 @@ bool simulate, simulate_cc;
 float cutoffCheckCurrent; // Variable to determine the current value for cutoff check
 static bool isHigh = true;
 
-#define WEB_PORTAL_ENABLE 1
+// enable portal
+bool WEB_PORTAL_ENABLE = 1;
 // BLINK ON
 int ON_DELAY_CC = 4000;
 // BLINK OFF
@@ -351,9 +352,9 @@ void periodicTask(void *pvParameters)
                         if (validateReadings(VEHICLE_READY_VOLTAGE) || simulate)
                         {
                             // Log when vehicle readiness is validated
-                            Serial.print("[");
-                            Serial.print(millis());
-                            Serial.println("] Vehicle readiness validated.");
+                            // Serial.print("[");
+                            // Serial.print(millis());
+                            // Serial.println("] Vehicle readiness validated.");
                             invalidReadingCount = 0;
                             if (millis() - lastCPCheck >= 10000)
                             {
@@ -402,19 +403,26 @@ void periodicTask(void *pvParameters)
                             float currentToSend;
                             if (mode_cc_enabled)
                             {
-                                static unsigned long lastToggleTime = 0; // Time of last toggle
-                                isHigh = true;                           // State: true = high (adjustedCurrent), false = low (LV_LOW_CURRENT_CC)
-                                if (millis() - lastToggleTime >= ON_DELAY_CC)
+                                static unsigned long lastToggleTime = 0;
+                                static bool isHigh = true; // Start in high state
+
+                                // Determine which delay to use based on current state
+                                unsigned long currentDelay = isHigh ? ON_DELAY_CC : OFF_DELAY_CC;
+
+                                // Check if it's time to toggle based on the appropriate delay
+                                if (millis() - lastToggleTime >= currentDelay)
                                 {
                                     isHigh = !isHigh;          // Toggle between high and low
                                     lastToggleTime = millis(); // Update toggle time
+
                                     // Log current toggle state
-                                    Serial.print("[");
-                                    Serial.print(millis());
-                                    Serial.print("] Toggling current to ");
-                                    Serial.println(isHigh ? "high" : "low");
+                                    // Serial.print("[");
+                                    // Serial.print(millis());
+                                    // Serial.print("] Toggling current to ");
+                                    // Serial.println(isHigh ? "high" : "low");
                                 }
-                                currentToSend = isHigh ? adjustedCurrent : LV_LOW_CURRENT_CC; // Set current based on state
+
+                                currentToSend = isHigh ? adjustedCurrent : LV_LOW_CURRENT_CC;
                             }
                             else
                             {
@@ -425,24 +433,22 @@ void periodicTask(void *pvParameters)
                             if (simulate_cc)
                             {
                                 // Log the simulated current for debugging
-                                Serial.print("[");
-                                Serial.print(currentTime);
-                                Serial.print("] Simulated batteryCurrent = ");
-                                Serial.println(batteryCurrent);
+                                // Serial.print("[");
+                                // Serial.print(currentTime);
+                                // Serial.print("] Simulated batteryCurrent = ");
+                                // Serial.println(batteryCurrent);
 
                                 // Toggle current based on timing intervals
-                                if (isHigh && (currentTime - previousMillis >= ON_DELAY_CC))
+                                if (!isHigh && (currentTime - previousMillis >= ON_DELAY_CC))
                                 {
                                     // Switch from high to low current after ON_DELAY_CC
                                     batteryCurrent = LV_LOW_CURRENT_CC;
-                                    isHigh = false;
                                     previousMillis = currentTime; // Reset the timer
                                 }
-                                else if (!isHigh && (currentTime - previousMillis >= OFF_DELAY_CC))
+                                else if (isHigh && (currentTime - previousMillis >= OFF_DELAY_CC))
                                 {
                                     // Switch from low to high current after OFF_DELAY_CC
                                     batteryCurrent = currentToSend;
-                                    isHigh = true;
                                     previousMillis = currentTime; // Reset the timer
                                 }
                             }
@@ -467,7 +473,7 @@ void periodicTask(void *pvParameters)
                                 // Serial.print("[");
                                 // Serial.print(millis());
                                 // Serial.print("] mode_cc true, using maxBatteryCurrent = ");
-                                Serial.println(maxBatteryCurrent);
+                                // Serial.println(maxBatteryCurrent);
                             }
                             else
                             {
@@ -597,7 +603,6 @@ void setup()
     while (!Serial)
         ; // Wait for Serial to be ready
     canbusSetup();
-    // Serial.println("canbus not setupped");
     // Initialize shared preferences and load stored settings
     preferences.begin("settings", false);
     targetVoltage = preferences.getFloat("targetVoltage", targetVoltage);
@@ -606,6 +611,7 @@ void setup()
     isActiveOnStartup = preferences.getBool("onStartup", isActiveOnStartup);
     cpModeEnabled = preferences.getBool("cpMode", cpModeEnabled);
     cutoffEnabled = preferences.getBool("tgCutoff", cutoffEnabled);
+    cutoffEnabled = true;
 
     Serial.print("==================================================");
     Serial.print("Loaded target voltage: ");
