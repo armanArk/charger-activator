@@ -37,11 +37,11 @@ void sendChargerCommand(float voltage, float current, bool startCharging)
     byte sndStat = CAN.sendMsgBuf(CHARGER_CONTROL_ID, 1, 8, data);
     if (sndStat == CAN_OK)
     {
-        Serial.println("Sent CAN command. OK,: " + String(commandCurrent) + "A," + String(batteryVoltage) + " V");
+        Serial.println("Sent CAN command. OK,: " + String(commandCurrent) + "A," + String(commandVoltage) + " V");
     }
     else
     {
-        Serial.println("Sent CAN command. FAILED,: " + String(commandCurrent) + "A," + String(batteryVoltage) + " V");
+        Serial.println("Sent CAN command. FAILED,: " + String(commandCurrent) + "A," + String(commandVoltage) + " V");
     }
 }
 

@@ -31,20 +31,37 @@ void printSystemStatus()
         Serial.print(staticVoltageDetected ? " [STATIC]" : "");
         Serial.print(" | curObc: ");
         Serial.print(String(getMaxCurrentForObc()) + " A");
-        Serial.print(" | modeCC:");
-        Serial.print(String(mode_cc));
-        Serial.print(" | blinkCur:");
-        Serial.print(String(isHigh));
-        Serial.print(" | ctoffEn:");
-        Serial.print(String(cutoffTriggered));
-        Serial.print(" | cutofCek:");
-        Serial.print(String(cutoffCheckCurrent));
+        Serial.print(" | curAc: ");
+        Serial.print(String(getMaxCurrent(dutyCycle)) + " A");
+        Serial.print(" | modeCCEn: ");
+        Serial.print(String(mode_cc_enabled));
+        Serial.print(" | modeccSt: ");
+        Serial.print(String(mode_cc_state));
         Serial.print(" | batCur:");
         Serial.print(String(batteryCurrent));
-        Serial.print(" | trigCCcur:");
-        Serial.print(String(lowCurrentCCEnabled));
-        Serial.print(" | cutOffCur:");
-        Serial.println(String(cutoffCurrent));
+        Serial.print(" | lvCC:");
+        Serial.print(String(triggerLevelCCmode));
+        Serial.print(" | chAct:");
+        Serial.print(String(chargerActive));
+        Serial.print(" | cSend:");
+        Serial.print(String(currentToSend));
+
+        Serial.print(" | modeCoff:");
+        Serial.print(String(cutoffEnabled));
+        // Serial.print(" | blinkCur:");
+        // Serial.print(String(isHigh));
+        // Serial.print(" | ctoffEn:");
+        // Serial.print(String(cutoffTriggered));
+        Serial.print(" | cutofCek:");
+        Serial.print(String(cutoffCheckCurrent));
+        // Serial.print(" | tgrVolt:");
+        // Serial.print(String(targetVoltage));
+        // Serial.print(" | trigLvBlink:");
+        // Serial.print(String(trigLevelBlinkEnabled));
+        Serial.print(" | ccur:");
+        Serial.print(String(CCcurrent));
+        Serial.print(" | vAC:");
+        Serial.println(String(voltageAC) +" VAC");
         lastStatusPrint = millis();
     }
 }
@@ -236,7 +253,7 @@ float getBatteryVoltage()
 }
 float getMaxCurrent(float dutyCycle)
 {
-    float correction = -0.1; // Adjust this value as needed
+    float correction = -0.8; // Adjust this value as needed
     if (dutyCycle >= 10.0 && dutyCycle <= 85.0)
     {
         if (dutyCycle <= 64.0) // First formula (up to 38.4A)
@@ -249,8 +266,14 @@ float getMaxCurrent(float dutyCycle)
 
 float getMaxCurrentForObc()
 {
+    float _voltageAc;
+    if(voltageAC < 100){
+        _voltageAc = 220;
+    }else{
+       _voltageAc = voltageAC; 
+    }
     float maxCurrent = getMaxCurrent(dutyCycle);
-    float watt = maxCurrent * 220;
+    float watt = maxCurrent * _voltageAc;
     float _batteryVoltage = getBatteryVoltage();
     return watt / _batteryVoltage;
 }
@@ -458,8 +481,8 @@ void handleSerialCommands()
             if (keyExists(dat, key_set_mode_cc))
             {
 
-                mode_cc = String(getValueKey(dat, key_set_mode_cc)).toInt();
-                Serial.println("key_set_mode_cc = " + String(mode_cc));
+                mode_blink = String(getValueKey(dat, key_set_mode_cc)).toInt();
+                Serial.println("key_set_mode_cc = " + String(mode_blink));
             }
             // Check for specific keys and act accordingly
             if (keyExists(dat, key_set_bat_v))
