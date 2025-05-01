@@ -723,7 +723,6 @@ void setup()
     cutoffCurrent = 2; //arus pada saat cutoff charger dimatikan
     //////////////SETTINGAN UNTUK CHARGING CUTOFF
 
-
     if (WEB_PORTAL_ENABLE)
     {
         // Initialize WiFi in Access Point mode
