@@ -307,6 +307,7 @@ void stopCharger()
     Serial.println("Charger stopped");
 }
 
+
 void periodicTask(void *pvParameters)
 {
     unsigned long lastTime = millis();
@@ -690,7 +691,7 @@ void setup()
     Serial.println(cpModeEnabled);
     Serial.print("Loaded tgCuttoff: ");
     Serial.println(cutoffEnabled);
-    Serial.print("==================================================");
+    Serial.print("============================================= =====");
 
 
     /*
