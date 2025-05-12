@@ -1,5 +1,6 @@
 // Tambahkan deklarasi di awal file, setelah includes
 
+
 // --- CAN Bus Functions ---
 void sendChargerCommand(float voltage, float current, bool startCharging)
 {

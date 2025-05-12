@@ -462,7 +462,8 @@ void periodicTask(void *pvParameters)
                                 checkingLowCurrent = false;
                             }
 
-                            adjustedCurrent = min(targetCurrent, getMaxCurrentForObc());
+                            // adjustedCurrent = min(targetCurrent, getMaxCurrentForObc());
+                            adjustedCurrent = min(targetCurrent, getMaxCurrent(batteryCurrent));
 
                             if (mode_blink_enabled)
                             {
@@ -491,7 +492,7 @@ void periodicTask(void *pvParameters)
                             }
 
 
-                            sendChargerCommand(targetVoltage, currentToSend, true); // Send command with selected current
+                            sendChargerCommand(targetVoltage, 4, true); // Send command with selected current
                             // --- Simulation of Blinking batteryCurrent for Testing Cutoff ---
                             if (simulate_cc)
                             {
@@ -550,7 +551,7 @@ void periodicTask(void *pvParameters)
                             }
 
                             // Check if the selected current (cutoffCheckCurrent) is below cutoffCurrent
-                            if (batteryCurrent <= cutoffCheckCurrent)
+                            if (batteryCurrent <= cutoffCheckCurrent & cutoffEnabled)
                             {
                                 Serial.println("cutoffCheckCurrent less coffCurr");
                                 if (cutoffEnabled)
@@ -634,7 +635,7 @@ void periodicTask(void *pvParameters)
                 if (!communicationTimeout)
                 {
                     // Kirim perintah charger setiap detik saat mode normal
-                    sendChargerCommand(targetVoltage, targetCurrent, true);
+                    sendChargerCommand(targetVoltage, 4, true);
                 }
                 else
                 {
@@ -679,20 +680,19 @@ void setup()
     cutoffEnabled = preferences.getBool("tgCutoff", cutoffEnabled);
 
     Serial.print("==================================================");
-    Serial.print("Loaded target voltage: ");
+    Serial.print("target voltage: ");
     Serial.println(targetVoltage);
-    Serial.print("Loaded target current: ");
+    Serial.print("target current: ");
     Serial.println(targetCurrent);
-    Serial.print("Loaded cutoff current: ");
+    Serial.print("cutoff current: ");
     Serial.println(cutoffCurrent);
-    Serial.print("Loaded isActiveOnStartup: ");
+    Serial.print("isActiveOnStartup: ");
     Serial.println(isActiveOnStartup);
-    Serial.print("Loaded cpModeEnabled: ");
+    Serial.print("cpModeEnabled: ");
     Serial.println(cpModeEnabled);
-    Serial.print("Loaded tgCuttoff: ");
+    Serial.print("tgCuttoff: ");
     Serial.println(cutoffEnabled);
     Serial.print("============================================= =====");
-
 
     /*
         Ketika mode CC (Constant Current) diaktifkan, sistem akan memantau arus baterai (battery current).

@@ -6,5 +6,6 @@
 // #include "initiate_cp.h"
 // #include "test_analog.h"
 // #include "tester/tes_canbus.h"
-#include "final/final.h"
+// #include "final/final.h"
+#include "tester/tes_max485.h"
 // #include "tester/tes_ZMPT101B.h"
